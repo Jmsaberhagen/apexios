@@ -1,0 +1,12 @@
+{
+  "name": "APEX Cotizador",
+  "short_name": "APEX",
+  "description": "Cotizador de alquileres de APEX Rental Manager",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0b0c",
+  "theme_color": "#0b0b0c",
+  "lang": "es-AR",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
