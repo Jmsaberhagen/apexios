@@ -14,6 +14,7 @@ const S = {
   stockIdx: null,
   clientes: [],
   presupuestos: [],
+  ventas: [],
   online: navigator.onLine,
   syncing: false,
   syncAgain: false,
@@ -92,6 +93,7 @@ async function cargarLocal(){
   S.clientes = await DB.all('clientes');
   S.stock = (await DB.get('kv', 'stock')) || null; S.stockIdx = null;
   await cargarPresupuestosLocal();
+  await cargarVentasLocal();
 }
 async function cargarPresupuestosLocal(){
   const all = await DB.all('presupuestos');
@@ -231,9 +233,11 @@ function stockModelo(modelo, sucId){
 async function bajarPresupuestos(){
   let rows;
   try{
-    rows = await fetchTodo(() => sb.from('presupuestos')
+    const rp = await sb.from('presupuestos')
       .select('*, clientes(razon_social), sucursales(nombre), presupuesto_items(*)')
-      .order('numero', { ascending:false }));
+      .order('numero', { ascending:false }).limit(80);          // solo los últimos 80: la app ya no es una copia de toda la base
+    if(rp.error) throw rp.error;
+    rows = rp.data || [];
   } catch(e){ if(e && e.code === '42501') return; throw e; }
   const locales = await DB.all('presupuestos');
   const porKey = new Map(locales.map(l => [l.key, l]));
@@ -384,16 +388,17 @@ async function sincronizar(opts){
   let resultado = null;
   try{
     resultado = await subirPendientes();
+    resultado.ventas = await subirVentas();
     await bajarSucursales();
     await bajarCatalogo();
     await bajarPresupuestos();
     try{ await refrescarPerfil(); } catch(e){ if(!esErrorDeRed(e)) throw e; }
-    await bajarClientes(!!opts.completo);
-    try{ await bajarStock(); } catch(e){ if(esErrorDeRed(e) || esErrorDeSesion(e)) throw e; console.warn('Stock', e); }
+    await bajarVentas(!!opts.completo);
+    await bajarTcBna();
+    // v1.3 (100% en línea): ya no se baja la base de clientes, ni el stock de toda la flota, ni las fotos de todos los modelos.
     S.lastSync = Date.now();
     await DB.put('kv', S.lastSync, 'lastSync');
     S.online = true;
-    prefetchFotos();
   } catch(e){
     if(esErrorDeSesion(e)){
       try{
@@ -409,6 +414,7 @@ async function sincronizar(opts){
   } finally {
     S.syncing = false;
     await cargarPresupuestosLocal();
+    await cargarVentasLocal();
     S.onChange('estado');
     S.onSynced(resultado, opts);
     if(S.syncAgain){ S.syncAgain = false; sincronizar({ silent:true }); }
@@ -427,7 +433,7 @@ async function iniciarSesion(email, password){
   // Si entra otra persona en este teléfono, se borran los datos de la anterior (nunca se mezclan)
   const anterior = await DB.get('kv', 'perfil');
   if(anterior && anterior.id !== perfil.id){
-    await Promise.all(['clientes','presupuestos','fotos','kv'].map(s => DB.clear(s)));
+    await Promise.all(['clientes','presupuestos','ventas','fotos','kv'].map(s => DB.clear(s)));
   }
   S.perfil = perfil;
   await DB.put('kv', perfil, 'perfil');
@@ -436,8 +442,34 @@ async function iniciarSesion(email, password){
 async function cerrarSesion(conservarDatos){
   try{ await sb.auth.signOut(); } catch(e){}
   if(!conservarDatos){
-    await Promise.all(['clientes','presupuestos','fotos','kv'].map(s => DB.clear(s)));
-    S.perfil = null; S.clientes = []; S.presupuestos = []; S.sucursales = []; S.stock = null; S.stockIdx = null; catalogoTecnicoCache = [];
+    await Promise.all(['clientes','presupuestos','ventas','fotos','kv'].map(s => DB.clear(s)));
+    S.perfil = null; S.clientes = []; S.presupuestos = []; S.ventas = []; S.sucursales = []; S.stock = null; S.stockIdx = null; catalogoTecnicoCache = [];
   }
   S.onNeedLogin();
+}
+
+// ---------- v1.3: consultas en línea, de a poco ----------
+// Clientes: se buscan en el servidor (25 por vez). Los que se ven quedan en memoria para poder elegirlos.
+const CLI_COLS = 'id,numero_cliente,razon_social,cuit,direccion,telefono,mail_envio_factura,activo,descuento_repuestos_pct';
+async function buscarClientesSrv(q){
+  q = String(q || '').trim().replace(/[%,()*]/g, ' ').trim();
+  if(q.length < 2) return [];
+  const dig = q.replace(/\D/g, '');
+  const f = [`razon_social.ilike.%${q}%`, `cuit.ilike.%${q}%`];
+  if(dig.length >= 3 && dig !== q) f.push(`cuit.ilike.%${dig}%`);
+  if(/^\d+$/.test(q)) f.push(`numero_cliente.eq.${q}`);
+  const { data, error } = await sb.from('clientes').select(CLI_COLS).or(f.join(',')).order('razon_social').limit(25);
+  if(error) throw error;
+  const rows = (data || []).filter(c => c.activo !== false);
+  rows.forEach(c => { const i = S.clientes.findIndex(x => x.id === c.id); if(i >= 0) S.clientes[i] = c; else S.clientes.push(c); });
+  return rows;
+}
+// Stock: una sola vez cuando se arma una cotización de alquiler y solo si lo que hay tiene más de 15 minutos.
+let _stockCargando = null;
+async function asegurarStock(){
+  if(!navigator.onLine) return false;
+  if(S.stock && Date.now() - S.stock.at < 15 * 60000) return false;
+  if(_stockCargando) return _stockCargando;
+  _stockCargando = (async () => { try{ await bajarStock(); return true; } catch(e){ console.warn('Stock', e); return false; } finally { _stockCargando = null; } })();
+  return _stockCargando;
 }

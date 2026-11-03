@@ -7,13 +7,15 @@ const DB = (() => {
   function open(){
     if(_db) return Promise.resolve(_db);
     return new Promise((res, rej) => {
-      const r = indexedDB.open('apex-cotizador', 1);
+      const r = indexedDB.open('apex-cotizador', 2);
       r.onupgradeneeded = () => {
         const d = r.result;
-        d.createObjectStore('kv');                                   // perfil, catálogo, sucursales, última sync...
-        d.createObjectStore('clientes', { keyPath:'id' });
-        d.createObjectStore('presupuestos', { keyPath:'key' });      // 'srv:<id>' o 'loc:<uuid>' (creados sin señal)
-        d.createObjectStore('fotos');                                // url -> { data, w, h }
+        const crear = (n, o) => { if(!d.objectStoreNames.contains(n)) d.createObjectStore(n, o); };   // v1 → v2 conserva lo que ya hay
+        crear('kv');                                                 // perfil, catálogo, sucursales, última sync...
+        crear('clientes', { keyPath:'id' });
+        crear('presupuestos', { keyPath:'key' });                    // 'srv:<id>' o 'loc:<uuid>' (creados sin señal)
+        crear('fotos');                                              // url -> { data, w, h }
+        crear('ventas', { keyPath:'key' });                          // cotizaciones de venta Haulotte (misma clave que presupuestos)
       };
       r.onsuccess = () => { _db = r.result; res(_db); };
       r.onerror = () => rej(r.error);

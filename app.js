@@ -27,6 +27,9 @@ const ICON = {
   eye:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   logout:'<path d="M9 4H5a2 2 0 00-2 2v12a2 2 0 002 2h4M16 8l4 4-4 4M20 12H9"/>',
   trash:'<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  rent:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  gear:'<path d="M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/>',
+  tag:'<path d="M3 4h8l9.6 9.6a2 2 0 010 2.8l-4.2 4.2a2 2 0 01-2.8 0L3 12z"/><circle cx="7.5" cy="8.5" r="1.3"/>',
 };
 const ic = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
 const apexMark = (px) => `<div class="apex-mark"><svg width="${px}" height="${px}" aria-hidden="true"><use href="#apex-pk"/></svg><div class="apex-word"><b>APEX</b><small>RENTAL MANAGER</small></div></div>`;
@@ -237,7 +240,7 @@ function vLogin(){
 }
 
 function chipEstado(){
-  const pend = pendientes().length;
+  const pend = pendientesTodos().length;
   let cls = '', txt = '';
   if(S.syncing){ cls = 'sync'; txt = 'Sincronizando…'; }
   else if(!navigator.onLine){ cls = 'off'; txt = pend ? `Sin conexión · ${pend} sin subir` : 'Sin conexión'; }
@@ -290,7 +293,9 @@ function vList(){
   if(pend) chips.push(['pendiente','Sin subir']);
   const nombre = nombreUsuario().split(/\s+/)[0];
   return `<div class="screen">
-    <header class="appbar">${apexMark(30)}
+    <header class="appbar">${tieneHome()
+      ? `<button class="icon-btn" data-act="volver" aria-label="Menú principal">${ic('back')}</button><div class="bar-title">Alquiler<span class="bar-sub">Presupuestos de equipos</span></div>`
+      : apexMark(30)}
       <div class="bar-actions"><span id="chip-slot">${chipEstado()}</span>
         <button class="icon-btn" data-act="tema" aria-label="Cambiar tema">${ic(document.body.classList.contains('light-theme') ? 'moon' : 'sun')}</button>
         <button class="avatar" data-act="cuenta" aria-label="Mi cuenta">${esc(iniciales())}</button></div>
@@ -306,7 +311,7 @@ function vList(){
   </div>`;
 }
 function bannerOffline(){
-  return navigator.onLine ? '' : `<div class="banner">${ic('warn')}<div><b>Trabajando sin conexión</b>Podés cotizar con normalidad. Todo se sube solo cuando vuelva la señal.</div></div>`;
+  return navigator.onLine ? '' : `<div class="banner">${ic('warn')}<div><b>Sin conexión</b>Podés ver lo último que se descargó, pero para cotizar y guardar necesitás internet.</div></div>`;
 }
 function helloSub(){
   const n = S.presupuestos.length, pend = pendientes().length;
@@ -475,7 +480,7 @@ function pasoHtml(){
       <div class="field"><label>Buscar en la base</label>
         <button class="picker" data-act="pick-cliente">${d.cliente_id
           ? `<span><b>${esc(d.cliente_nombre)}</b><small>Tocá para cambiar</small></span>`
-          : `<span class="ph">${S.clientes.length ? `Buscar entre ${S.clientes.length.toLocaleString('es-AR')} clientes…` : 'Base de clientes no disponible'}</span>`}${ic('chevron')}</button>
+          : `<span class="ph">Buscar cliente…</span>`}${ic('chevron')}</button>
         ${d.cliente_id ? `<button class="btn sm ghost" style="margin-top:8px" data-act="clear-cliente">Quitar cliente (es un prospecto)</button>` : ''}</div>
       ${!d.cliente_id ? fld('Empresa (si es prospecto nuevo)', 'empresa_nombre', { ac:'off' }) : ''}
       <div class="sec-title">Contacto</div>
@@ -542,7 +547,9 @@ function actualizarTotales(){
 function render(){
   const root = $('#app');
   let html;
-  if(V.view === 'login') html = vLogin();
+  const hv = renderVenta();                              // menú de inicio y cotizador de venta (venta.js)
+  if(hv != null) html = hv;
+  else if(V.view === 'login') html = vLogin();
   else if(V.view === 'detail') html = vDetail();
   else if(V.view === 'editor' && E) html = vEditor();
   else { V.view = 'list'; html = vList(); }
@@ -555,6 +562,7 @@ function render(){
 }
 function refrescarCromo(){
   document.querySelectorAll('#chip-slot').forEach(s => { s.innerHTML = chipEstado(); });
+  if(refrescarVenta()) return;
   if(V.view === 'list'){
     const h = $('#hello-sub'); if(h) h.innerHTML = helloSub();
     const o = $('#offline-slot'); if(o) o.innerHTML = bannerOffline();
@@ -594,6 +602,7 @@ async function salirEditor(){
 function atras(){
   if(V.pdf){ cerrarVisorPdf(); return true; }
   if(OV){ cerrarOverlay(); return true; }
+  if(atrasVenta()) return true;
   if(V.view === 'editor'){ salirEditor(); return true; }
   if(V.view === 'detail'){ irLista(); return true; }
   return false;           // en la lista (o login): la app se cierra
@@ -601,29 +610,7 @@ function atras(){
 window.apexBack = atras;
 
 // ---------- Selectores (hojas) ----------
-function abrirClientes(){
-  if(!S.clientes.length){ toast('La base de clientes todavía no se descargó. Conectate para sincronizar.', 'err'); return; }
-  const render = q => {
-    q = q.trim().toLowerCase();
-    const dig = q.replace(/\D/g, '');
-    let res = S.clientes;
-    if(q){
-      res = res.filter(c => {
-        if(!c._h) c._h = `${c.razon_social || ''} ${c.cuit || ''} ${(c.cuit || '').replace(/\D/g, '')} ${c.numero_cliente || ''}`.toLowerCase();
-        return c._h.includes(q) || (dig.length >= 3 && c._h.includes(dig));
-      });
-    }
-    const top = res.slice(0, 40);
-    return top.length ? top.map(c => `<button class="opt" data-act="sel-cliente" data-id="${c.id}"><div class="tx"><b>${esc(c.razon_social)}</b><small>${esc([c.cuit, c.numero_cliente ? 'N° ' + c.numero_cliente : ''].filter(Boolean).join(' · ') || '—')}</small></div></button>`).join('') +
-      (res.length > 40 ? `<div class="dim" style="text-align:center;padding:10px;font-size:12px">${res.length - 40} más… afiná la búsqueda</div>` : '')
-      : `<div class="empty" style="padding:24px"><b>Sin resultados</b>Si es un prospecto nuevo, cerrá esto y escribí la empresa.</div>`;
-  };
-  abrirHoja('Elegir cliente', `<div class="search">${ic('search')}<input id="cli-q" type="search" placeholder="Razón social, CUIT o N° de cliente" autocomplete="off"></div><div id="cli-res">${render('')}</div>`, sh => {
-    const inp = $('#cli-q', sh); let t;
-    inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { $('#cli-res', sh).innerHTML = render(inp.value); }, 120); });
-    setTimeout(() => inp.focus(), 250);
-  });
-}
+function abrirClientes(){ abrirBuscadorClientes('sel-cliente'); }
 function abrirModelos(alElegir){
   const sucId = E && E.data.sucursal_id;
   const cat = catalogoTecnicoCache.filter(c => c.especificaciones && c.especificaciones.length);
@@ -658,7 +645,7 @@ function abrirModelos(alElegir){
 }
 function abrirCuenta(){
   const p = S.perfil || {};
-  const pend = pendientes().length;
+  const pend = pendientesTodos().length;
   abrirHoja('Mi cuenta', `
     <div class="kv" style="margin:0 8px 14px">
       <div><small>Usuario</small><b>${esc(nombreUsuario())}</b></div>
@@ -682,6 +669,7 @@ function abrirAnular(p){
 
 // ---------- Acciones ----------
 async function guardarEditor(){
+  if(!navigator.onLine) return toast('Sin conexión. Este presupuesto necesita internet para guardarse.', 'err');
   const d = E.data;
   if(!d.sucursal_id){ irPaso(1); return; }
   const items = E.items.filter(it => it.modelo && Number(it.cantidad) > 0);
@@ -764,6 +752,7 @@ async function generarPdf(modo){
 }
 // Antes de mandárselo al cliente: si algún equipo no tiene stock libre en la sucursal, hay que confirmarlo
 async function confirmarStock(p){
+  await asegurarStock();                       // stock bajo demanda: una sola consulta, solo al compartir
   const adv = advertenciasStock(p.sucursal_id, p.presupuesto_items);
   if(!adv.length) return true;
   return confirmar({
@@ -896,7 +885,7 @@ async function hacerLogin(){
     V.loginMsg = '';
     await cargarLocal();
     S.perfil = (await DB.get('kv', 'perfil')) || S.perfil;
-    irLista();
+    irInicio();
     sincronizar({ silent: true });
   } catch(e){
     err.textContent = e.message || 'No se pudo ingresar';
@@ -918,10 +907,10 @@ async function accion(act, el){
     case 'sync-now': cerrarOverlay(); return sincronizar({});
     case 'sync-full': cerrarOverlay(); return sincronizar({ completo: true });
     case 'logout': {
-      const pend = pendientes().length;
+      const pend = pendientesTodos().length;
       const ok = await confirmar({
         titulo: 'Cerrar sesión',
-        texto: pend ? `Tenés ${pend} presupuesto(s) sin subir. Si cerrás sesión ahora, se pierden.` : 'Vas a tener que volver a ingresar con tu email y contraseña.',
+        texto: pend ? `Tenés ${pend} presupuesto(s)/cotización(es) sin subir. Si cerrás sesión ahora, se pierden.` : 'Vas a tener que volver a ingresar con tu email y contraseña.',
         ok: 'Cerrar sesión', peligro: true,
       });
       if(!ok) return;
@@ -929,13 +918,13 @@ async function accion(act, el){
       return cerrarSesion(!pend);
     }
     case 'filtro': V.filtro = el.dataset.v; return refrescarCromo();
-    case 'nuevo': E = nuevoEditor(); V.view = 'editor'; render(); window.scrollTo(0, 0); return;
+    case 'nuevo': E = nuevoEditor(); V.view = 'editor'; render(); window.scrollTo(0, 0); asegurarStock().then(ch => { if(ch && E && V.view === 'editor') render(); }); return;
     case 'abrir': return irDetalle(el.dataset.key);
     case 'volver': return atras();
     case 'editar': {
       const p = S.presupuestos.find(x => x.key === S.detailKey);
       if(!p) return;
-      E = editorDesde(p); V.view = 'editor'; render(); window.scrollTo(0, 0); return;
+      E = editorDesde(p); V.view = 'editor'; render(); window.scrollTo(0, 0); asegurarStock().then(ch => { if(ch && E && V.view === 'editor') render(); }); return;
     }
     case 'pdf': return generarPdf('compartir');
     case 'anular': { const p = S.presupuestos.find(x => x.key === S.detailKey); if(p) abrirAnular(p); return; }
@@ -1019,6 +1008,7 @@ async function accion(act, el){
       setTimeout(() => { const n = document.querySelector(`input[data-k="precio"][data-i="${i + 1}"]`); if(n){ n.scrollIntoView({ block: 'center', behavior: 'smooth' }); n.focus(); } }, 60);
       return;
     }
+    default: return accionVenta(act, el);          // menú de inicio y venta Haulotte (venta.js)
   }
 }
 
@@ -1061,7 +1051,7 @@ document.addEventListener('keydown', e => {
 window.addEventListener('online', () => { S.online = true; refrescarCromo(); sincronizar({ silent: true }); });
 window.addEventListener('offline', () => { S.online = false; refrescarCromo(); });
 document.addEventListener('visibilitychange', () => {
-  if(document.visibilityState === 'visible' && S.perfil && navigator.onLine && (!S.lastSync || Date.now() - S.lastSync > 120000)) sincronizar({ silent: true });
+  if(document.visibilityState === 'visible' && S.perfil && navigator.onLine && (!S.lastSync || Date.now() - S.lastSync > 600000)) sincronizar({ silent: true });
 });
 
 // ---------- Conexión con la sincronización ----------
@@ -1073,8 +1063,15 @@ S.onSynced = (res, opts) => {
   if(creados.length === 1) toast(`${numeroTexto(creados[0])} sincronizado`, 'ok');
   else if(creados.length > 1) toast(`${creados.length} presupuestos sincronizados`, 'ok');
   if(res.fallidos.length) toast(`${res.fallidos.length} presupuesto(s) no se pudieron subir. Revisalos para ver el motivo.`, 'err');
-  if(!opts.silent && !creados.length && !res.fallidos.length && !S.lastError) toast('Todo al día', 'ok');
-  if(V.view === 'list') refrescarCromo();
+  const rv = res.ventas;
+  if(rv){
+    const nuevas = rv.ok.filter(r => r.numero);
+    if(nuevas.length === 1 && !creados.length) toast(`Cotización de venta ${numeroTexto(nuevas[0])} sincronizada`, 'ok');
+    else if(nuevas.length > 1) toast(`${nuevas.length} cotizaciones de venta sincronizadas`, 'ok');
+    if(rv.fallidos.length) toast(`${rv.fallidos.length} cotización(es) de venta no se pudieron subir. Revisalas para ver el motivo.`, 'err');
+  }
+  if(!opts.silent && !creados.length && !res.fallidos.length && !(res.ventas && (res.ventas.ok.length || res.ventas.fallidos.length)) && !S.lastError) toast('Todo al día', 'ok');
+  if(V.view === 'list' || V.view === 'home' || V.view === 'vlist' || V.view === 'vdetail') refrescarCromo();
 };
 
 // ---------- Arranque ----------
@@ -1086,14 +1083,14 @@ S.onSynced = (res, opts) => {
     let sesion = null;
     try{ const r = await sb.auth.getSession(); sesion = r && r.data && r.data.session; } catch(e){ console.warn('getSession', e); }
     if(sesion && S.perfil && S.perfil.id === sesion.user.id){
-      irLista();
+      irInicio();
       sincronizar({ silent: true });
     } else if(!navigator.onLine && S.perfil){
       // Sin señal al abrir: se entra con los datos guardados en el teléfono
-      irLista();
+      irInicio();
     } else if(sesion && !S.perfil){
       const { data } = await sb.from('perfiles').select('*').eq('id', sesion.user.id).single();
-      if(data && data.activo){ S.perfil = data; await DB.put('kv', data, 'perfil'); irLista(); sincronizar({}); }
+      if(data && data.activo){ S.perfil = data; await DB.put('kv', data, 'perfil'); irInicio(); sincronizar({}); }
       else { await sb.auth.signOut(); V.view = 'login'; render(); }
     } else {
       V.view = 'login'; render();

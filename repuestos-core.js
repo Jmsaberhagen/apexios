@@ -1,0 +1,163 @@
+// =====================================================================
+// PRESUPUESTO DE REPUESTOS HAULOTTE — cálculo + PDF (lo usan APEX web y la app Android)
+// Precio de lista = costo ARG × (1 + margen). Descuento del cliente sobre la lista. Envío y IVA al final.
+// =====================================================================
+const MARGEN_REPUESTOS_DEFECTO = 60;   // % sobre costo
+const IVA_REPUESTOS = 21;              // %
+const rpR2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
+const rpN2 = v => Number(v).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const rpN0 = v => Number(v).toLocaleString('es-AR', { maximumFractionDigits: 0 });
+const rpNum = v => { const n = Number(v); return isFinite(n) ? n : 0; };
+
+// o: { items:[{codigo, descripcion, cantidad, costo}], margen_pct, descuento_pct, envio_usd, iva_pct, tc }
+function calcularRepuestos(o){
+  const margen = o.margen_pct === '' || o.margen_pct == null ? MARGEN_REPUESTOS_DEFECTO : Math.max(rpNum(o.margen_pct), 0);
+  const items = (o.items || []).filter(i => rpNum(i.cantidad) > 0).map(i => {
+    const lista = rpR2(rpNum(i.costo) * (1 + margen / 100));
+    return { ...i, lista, sub: rpR2(lista * rpNum(i.cantidad)) };
+  });
+  const subtotal = rpR2(items.reduce((a, i) => a + i.sub, 0));
+  const descPct = Math.min(Math.max(rpNum(o.descuento_pct), 0), 99.99);
+  const descuento = rpR2(subtotal * descPct / 100);
+  const envio = rpR2(Math.max(rpNum(o.envio_usd), 0));
+  const neto = rpR2(subtotal - descuento + envio);
+  const ivaPct = o.iva_pct === '' || o.iva_pct == null ? IVA_REPUESTOS : rpNum(o.iva_pct);
+  const iva = rpR2(neto * ivaPct / 100);
+  const total = rpR2(neto + iva);
+  const tc = rpNum(o.tc);
+  return { items, margen, subtotal, descPct, descuento, envio, neto, ivaPct, iva, total, tc, totalArs: Math.round(total * tc) };
+}
+// Desde un presupuesto ya guardado (precio_unitario = lista): se recalcula con margen 0 sobre esos precios
+function calcularRepuestosGuardado(p, items){
+  return calcularRepuestos({
+    items: (items || []).map(i => ({ cantidad: i.cantidad, costo: i.precio_unitario })),
+    margen_pct: 0, descuento_pct: p.descuento_pct, envio_usd: p.envio_usd, iva_pct: p.iva_pct, tc: p.tipo_cambio,
+  });
+}
+
+// cot: { numero, fecha_emision, validez_dias, cliente:{razon_social}, empresa_nombre, contacto_*, condicion_pago, notas,
+//        items:[{codigo, descripcion, cantidad, precio_unitario}], descuento_pct, envio_usd, iva_pct, tc, tc_fecha }
+function generarRepuestosPDF(cot){
+  const calc = calcularRepuestos({
+    items: cot.items.map(i => ({ ...i, costo: i.precio_unitario })), margen_pct: 0,
+    descuento_pct: cot.descuento_pct, envio_usd: cot.envio_usd, iva_pct: cot.iva_pct, tc: cot.tc,
+  });
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const marginX = 18, R = pageWidth - marginX;
+  const ROJO = [226, 35, 41], NEGRO = [24, 24, 26];
+  const bannerH = pageWidth / (2475 / 406);
+  const LIM = 297 - bannerH - 9;
+  const empresa = (cot.cliente && cot.cliente.razon_social) || cot.empresa_nombre || '—';
+  const numero = cot.numero ? String(cot.numero).padStart(5, '0') : 'BORRADOR';
+  const logoW = 56, logoH = logoW / (932 / 150);
+
+  const encabezado = () => {
+    let y = 15;
+    try{ doc.addImage(LOGO_HAULOTTE_BASE64, 'PNG', marginX, y, logoW, logoH); } catch(e){ console.error(e); }
+    doc.setTextColor(0);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+    doc.text(`PRESUPUESTO DE REPUESTOS N° ${numero}`, R, y + 5, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text(`Fecha de emisión: ${fmtDate(cot.fecha_emision)}`, R, y + 11, { align: 'right' });
+    doc.text(`Válido por ${cot.validez_dias || 7} días`, R, y + 16, { align: 'right' });
+    y += 24;
+    doc.setDrawColor(...ROJO); doc.setLineWidth(0.9);
+    doc.line(marginX, y, R, y);
+    return y + 8;
+  };
+  const titulo = (txt, y) => { doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(0); doc.text(txt, marginX, y); return y + 6; };
+  const X = { cod: marginX + 2, desc: marginX + 32, cant: 134, pu: 162, sub: R - 2 };
+  const cabTabla = y => {
+    doc.setFillColor(...NEGRO); doc.rect(marginX, y - 5, pageWidth - marginX * 2, 7, 'F');
+    doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+    doc.text('Código', X.cod, y); doc.text('Descripción', X.desc, y);
+    doc.text('Cant.', X.cant, y, { align: 'right' }); doc.text('Precio unit. U$D', X.pu, y, { align: 'right' }); doc.text('Subtotal U$D', X.sub, y, { align: 'right' });
+    doc.setTextColor(0);
+    return y + 8;
+  };
+
+  let y = encabezado();
+  y = titulo('DATOS DEL CLIENTE', y);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  doc.text(`Empresa: ${empresa}`, marginX, y); y += 5;
+  if(cot.contacto_nombre){ doc.text(`Contacto: ${cot.contacto_nombre}`, marginX, y); y += 5; }
+  if(cot.contacto_email){ doc.text(`Email: ${cot.contacto_email}`, marginX, y); y += 5; }
+  if(cot.contacto_telefono){ doc.text(`Teléfono: ${cot.contacto_telefono}`, marginX, y); y += 5; }
+
+  y += 6;
+  y = titulo('REPUESTOS COTIZADOS', y) + 2;
+  y = cabTabla(y);
+  let z = 0;
+  calc.items.forEach(it => {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    const ls = doc.splitTextToSize(it.descripcion || "", 70).slice(0, 3);
+    const h = Math.max(ls.length * 4 + 2.5, 7);
+    if(y + h > LIM){ doc.addPage(); y = encabezado(); y = cabTabla(y); z = 0; }
+    if(z++ % 2 === 1){ doc.setFillColor(246, 247, 249); doc.rect(marginX, y - 4, pageWidth - marginX * 2, h, 'F'); }
+    doc.setFont('helvetica', 'bold'); doc.text(String(it.codigo || ''), X.cod, y);
+    doc.setFont('helvetica', 'normal'); doc.text(ls, X.desc, y);
+    doc.text(String(it.cantidad), X.cant, y, { align: 'right' });
+    doc.text(rpN2(it.lista), X.pu, y, { align: 'right' });
+    doc.text(rpN2(it.sub), X.sub, y, { align: 'right' });
+    y += h;
+  });
+  doc.setDrawColor(...NEGRO); doc.setLineWidth(0.4); doc.line(marginX, y - 2.5, R, y - 2.5);
+
+  // ---------- Resumen ----------
+  const filas = [['Subtotal', 'U$D ' + rpN2(calc.subtotal)]];
+  if(calc.descuento > 0) filas.push([`Descuento ${String(calc.descPct).replace('.', ',')}%`, '- U$D ' + rpN2(calc.descuento)]);
+  if(calc.envio > 0) filas.push(['Envío', 'U$D ' + rpN2(calc.envio)]);
+  filas.push(['Total neto', 'U$D ' + rpN2(calc.neto)]);
+  filas.push([`IVA ${String(calc.ivaPct).replace('.', ',')}%`, 'U$D ' + rpN2(calc.iva)]);
+  filas.push(['TOTAL U$D', 'U$D ' + rpN2(calc.total), true]);
+  if(calc.tc > 0){ filas.push(['Tipo de cambio de referencia', '$ ' + rpN2(calc.tc)]); filas.push(['TOTAL EN PESOS', '$ ' + rpN0(calc.totalArs), true]); }
+  const altoBox = filas.length * 6.4 + 4;
+  y += 4;
+  if(y + altoBox + 6 > LIM){ doc.addPage(); y = encabezado(); }
+  const bx = R - 92, bw = 92;
+  doc.setFillColor(244, 245, 247); doc.setDrawColor(222); doc.setLineWidth(0.2);
+  doc.roundedRect(bx, y - 4, bw, altoBox, 1.5, 1.5, 'FD');
+  filas.forEach((f, i) => {
+    const yy = y + i * 6.4 + 1;
+    doc.setFont('helvetica', f[2] ? 'bold' : 'normal'); doc.setFontSize(f[2] ? 9.5 : 9); doc.setTextColor(f[2] ? 0 : 70);
+    doc.text(f[0], bx + 4, yy);
+    doc.setTextColor(0); doc.text(f[1], bx + bw - 4, yy, { align: 'right' });
+  });
+  y += altoBox + 8;
+
+  // ---------- Condiciones ----------
+  const notasLs = cot.notas ? doc.splitTextToSize(cot.notas, pageWidth - marginX * 2) : [];
+  const fechaTc = cot.tc_fecha ? ` (${fmtDate(cot.tc_fecha)})` : '';
+  const conds = [
+    `Precios expresados en dólares estadounidenses, netos de IVA. Se adiciona IVA (${String(calc.ivaPct).replace('.', ',')}%).`,
+    calc.tc > 0 ? `El pago se realiza en pesos, al tipo de cambio de referencia de $ ${rpN2(calc.tc)} por U$D${fechaTc}. Si al momento del pago existiera diferencia de cambio, se emitirá una nota de débito por dicha diferencia.` : null,
+    cot.condicion_pago ? `Condición de pago: ${cot.condicion_pago}.` : null,
+    calc.envio > 0 ? 'El costo de envío está incluido en el total.' : 'El envío no está incluido en esta cotización.',
+    'Los precios están sujetos a disponibilidad de stock al momento de confirmar el pedido.',
+    `Validez de la oferta: ${cot.validez_dias || 7} días desde la fecha de emisión.`,
+  ].filter(Boolean);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+  const lsConds = conds.map(l => doc.splitTextToSize('• ' + l, pageWidth - marginX * 2));
+  const altoConds = 8 + lsConds.reduce((a, l) => a + l.length * 4.6 + 0.8, 0) + (notasLs.length ? 8 + notasLs.length * 4.6 : 0);
+  if(y + altoConds > LIM){ doc.addPage(); y = encabezado(); }
+  y = titulo('CONDICIONES COMERCIALES', y);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+  lsConds.forEach(ls => { doc.text(ls, marginX, y); y += ls.length * 4.6 + 0.8; });
+  if(notasLs.length){
+    y += 3; doc.setFont('helvetica', 'bold'); doc.text('Notas:', marginX, y); y += 5;
+    doc.setFont('helvetica', 'normal'); doc.text(notasLs, marginX, y);
+  }
+
+  const total = doc.internal.getNumberOfPages();
+  for(let p = 1; p <= total; p++){
+    doc.setPage(p);
+    try{ doc.addImage(FOOTER_BANNER_BASE64, 'JPEG', 0, 297 - bannerH, pageWidth, bannerH); } catch(e){ console.error(e); }
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(150);
+    doc.text('Haulotte Argentina — Panamericana Km. 34.300 Colectora Oeste, Ramal Escobar, Grand Bourg, Buenos Aires', marginX, 297 - bannerH - 3);
+    doc.text(`Página ${p} de ${total}`, R, 297 - bannerH - 3, { align: 'right' });
+    doc.setTextColor(0);
+  }
+  return { doc, calc, fileName: `Presupuesto_Repuestos_${numero}_${empresa.replace(/[^a-zA-Z0-9]/g, '_')}.pdf` };
+}

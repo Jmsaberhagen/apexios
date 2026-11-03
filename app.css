@@ -381,3 +381,35 @@ select.in{appearance:none;background-image:linear-gradient(45deg,transparent 50%
 .pdfv-pgn{font-size:12.5px;color:var(--text-dim);font-weight:600;white-space:nowrap;}
 .pdfv-load{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:13px;}
 .dlg p{white-space:pre-line;}
+
+/* ---------- Menú de inicio (alquiler / venta Haulotte) ---------- */
+.launchers{display:flex;flex-direction:column;gap:12px;margin-top:6px;}
+.launch{
+  position:relative;display:flex;align-items:center;gap:14px;width:100%;text-align:left;padding:18px 16px 18px 20px;
+  border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;cursor:pointer;
+  background:linear-gradient(135deg,var(--panel) 40%,color-mix(in srgb,var(--stripe,var(--accent)) 10%,var(--panel)));
+  animation:rise .3s ease both;transition:transform .12s ease,border-color .15s ease;
+}
+.launch::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--stripe,var(--accent));}
+.launch:active{transform:scale(.985);border-color:var(--stripe,var(--accent));}
+.launch-ic{flex:none;width:50px;height:50px;border-radius:14px;display:grid;place-items:center;
+  background:color-mix(in srgb,var(--stripe,var(--accent)) 16%,var(--panel-2));color:var(--stripe,var(--accent));}
+.launch-ic svg{width:26px;height:26px;}
+.launch-tx{flex:1;min-width:0;}
+.launch-tx b{display:block;font-size:17px;font-weight:800;letter-spacing:-.01em;}
+.launch-tx small{display:block;color:var(--text-dim);font-size:12.5px;margin:2px 0 7px;}
+.launch-tx em{font-style:normal;font-size:12px;font-weight:700;color:var(--stripe,var(--accent));}
+.launch>svg{flex:none;width:20px;height:20px;color:var(--text-dim);}
+
+/* ---------- Cotizador de venta: tabla de cuotas y tipo de cambio ---------- */
+.tc-row{display:flex;gap:10px;align-items:center;}
+.tc-row .btn{flex:none;}
+.cuotas-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);}
+.cuotas{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums;}
+.cuotas th{padding:9px 8px;text-align:right;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dim);font-weight:700;border-bottom:1px solid var(--border);white-space:nowrap;}
+.cuotas td{padding:8px;text-align:right;border-bottom:1px dashed var(--border);white-space:nowrap;}
+.cuotas th:first-child,.cuotas td:first-child{text-align:left;padding-left:12px;font-weight:700;}
+.cuotas tr:last-child td{border-bottom:0;}
+.cuotas tr.ci td{background:color-mix(in srgb,#e22329 9%,transparent);}
+.cuotas tr.ant td{font-weight:700;}
+.cuotas tr.tot td{font-weight:800;border-top:2px solid var(--text-dim);background:var(--panel-2);}
