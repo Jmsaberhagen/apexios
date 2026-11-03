@@ -55,6 +55,48 @@ function disponibilidadValida(v, cantidad){
   return m && Number(m[1]) > Number(cantidad) ? null : (v || null);
 }
 
+// ---------- Fotos para el PDF de repuestos (miniaturas) ----------
+// La foto de cada artículo sale de haulotte_repuestos_gp.imagen_url. Se reduce a miniatura y se guarda en el teléfono (clave "rep:CODIGO") para verla sin señal.
+const rFotoMem = {};
+async function rMiniaturaDeUrl(url){
+  try{
+    const resp = await fetch(url); if(!resp.ok) return null;
+    const blob = await resp.blob();
+    const data0 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+    const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = data0; });
+    const MAX = 220, esc = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * esc)), h = Math.max(1, Math.round(img.naturalHeight * esc));
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.drawImage(img, 0, 0, w, h);
+    return { data: cv.toDataURL('image/jpeg', 0.72), w, h };
+  } catch(e){ console.warn('Foto no disponible', e); return null; }
+}
+async function rPrecargarFotos(items){
+  try{
+    const codigos = [...new Set(items.map(i => i.codigo).filter(Boolean))];
+    const faltan = [];
+    for(const c of codigos){
+      if(c in rFotoMem) continue;
+      const g = (typeof fotoCacheGet === 'function') ? await fotoCacheGet('rep:' + c) : null;
+      if(g){ rFotoMem[c] = g; } else faltan.push(c);
+    }
+    if(faltan.length && navigator.onLine){
+      for(let i = 0; i < faltan.length; i += 100){
+        const lote = faltan.slice(i, i + 100);
+        const { data } = await sb.from('haulotte_repuestos_gp').select('codigo,imagen_url').in('codigo', lote);
+        const urls = {}; (data || []).forEach(r => { urls[r.codigo] = r.imagen_url; });
+        await Promise.all(lote.map(async c => {
+          const f = urls[c] ? await rMiniaturaDeUrl(urls[c]) : null;
+          rFotoMem[c] = f;
+          if(f && typeof fotoCachePut === 'function') fotoCachePut('rep:' + c, f);
+        }));
+      }
+    }
+  } catch(e){ console.warn('No se pudieron cargar las fotos del PDF:', e); }
+  items.forEach(i => { i.foto = rFotoMem[i.codigo] || null; });
+  return items;
+}
+
 // cot: { numero, fecha_emision, validez_dias, cliente:{razon_social}, empresa_nombre, contacto_*, condicion_pago, notas,
 //        items:[{codigo, descripcion, cantidad, precio_unitario}], descuento_pct, envio_usd, iva_pct, tc, tc_fecha }
 function generarRepuestosPDF(cot){
@@ -88,11 +130,12 @@ function generarRepuestosPDF(cot){
     return y + 8;
   };
   const titulo = (txt, y) => { doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(0); doc.text(txt, marginX, y); return y + 6; };
-  const X = { cod: marginX + 2, desc: marginX + 25, cant: 106, pu: 128, sub: 152, disp: 173 };
+  const X = { foto: marginX + 1, cod: marginX + 19, desc: marginX + 42, cant: 114, pu: 134, sub: 156, disp: 175 };
+  const FOTO_W = 16, FOTO_H = 12.5;
   const cabTabla = y => {
     doc.setFillColor(...NEGRO); doc.rect(marginX, y - 5, pageWidth - marginX * 2, 7, 'F');
     doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
-    doc.text('Código', X.cod, y); doc.text('Descripción', X.desc, y);
+    doc.text('Foto', X.foto, y); doc.text('Código', X.cod, y); doc.text('Descripción', X.desc, y);
     doc.text('Cant.', X.cant, y, { align: 'right' }); doc.text('P. unit. U$D', X.pu, y, { align: 'right' }); doc.text('Subtotal U$D', X.sub, y, { align: 'right' }); doc.text('Disponibilidad', X.disp, y, { align: 'center' });
     doc.setTextColor(0);
     return y + 8;
@@ -112,10 +155,20 @@ function generarRepuestosPDF(cot){
   let z = 0;
   calc.items.forEach(it => {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
-    const ls = doc.splitTextToSize(it.descripcion || "", 56).slice(0, 3);
-    const h = Math.max(ls.length * 4 + 2.5, 7);
+    const ls = doc.splitTextToSize(it.descripcion || "", 46).slice(0, 4);
+    const h = Math.max(ls.length * 4 + 2.5, FOTO_H + 4);
     if(y + h > LIM){ doc.addPage(); y = encabezado(); y = cabTabla(y); z = 0; }
     if(z++ % 2 === 1){ doc.setFillColor(246, 247, 249); doc.rect(marginX, y - 4, pageWidth - marginX * 2, h, 'F'); }
+    // Miniatura (si no hay foto, recuadro gris liviano para que la tabla no quede desalineada)
+    if(it.foto && it.foto.data){
+      const esc = Math.min(FOTO_W / it.foto.w, FOTO_H / it.foto.h), fw = it.foto.w * esc, fh = it.foto.h * esc;
+      try{ doc.addImage(it.foto.data, 'JPEG', X.foto + (FOTO_W - fw) / 2, y - 3 + (FOTO_H - fh) / 2, fw, fh); } catch(e){ console.error(e); }
+    } else {
+      doc.setFillColor(238, 239, 241); doc.setDrawColor(222); doc.setLineWidth(0.15);
+      doc.rect(X.foto, y - 3, FOTO_W, FOTO_H, 'FD');
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(5.5); doc.setTextColor(150);
+      doc.text('sin foto', X.foto + FOTO_W / 2, y - 3 + FOTO_H / 2 + 1, { align: 'center' }); doc.setTextColor(0); doc.setFontSize(8.5);
+    }
     doc.setFont('helvetica', 'bold'); doc.text(String(it.codigo || ''), X.cod, y);
     doc.setFont('helvetica', 'normal'); doc.text(ls, X.desc, y);
     doc.text(String(it.cantidad), X.cant, y, { align: 'right' });

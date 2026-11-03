@@ -14,6 +14,7 @@ const ICON = {
   file:'<path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
   share:'<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.6l6.8-4M8.6 13.4l6.8 4"/>',
   edit:'<path d="M4 20h4l10.5-10.5a2.1 2.1 0 00-3-3L5 17z"/>',
+  download:'<path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/>',
   ban:'<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
   sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   moon:'<path d="M20 14.5A8.5 8.5 0 019.5 4 8.5 8.5 0 1020 14.5z"/>',
@@ -224,6 +225,28 @@ function advertenciasStock(sucId, items){
   return out;
 }
 
+// ---------- Instalar la app en el teléfono (PWA) ----------
+// En Android (Chrome) deja instalar con un toque; en iPhone muestra cómo agregarla al inicio. No aparece dentro del APK ni si ya está instalada.
+let _instalarEvt = null;
+function appInstalada(){ return !!(window.ApexAndroid || navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)); }
+function htmlInstalar(){
+  if(appInstalada() || (location.protocol !== 'https:' && location.hostname !== 'localhost')) return '';
+  const ua = navigator.userAgent || '';
+  if(_instalarEvt) return `<button class="btn ghost block" data-act="instalar-app" style="margin-top:12px">${ic('download')}Instalar APEX en este teléfono</button>`;
+  if(/Android/i.test(ua)) return `<p class="muted" style="margin:14px 0 0;font-size:12.5px;text-align:center">Para tenerla como app: tocá el menú <b>⋮</b> de Chrome y elegí <b>Instalar app</b>.</p>`;
+  if(/iPhone|iPad|iPod/i.test(ua)) return `<p class="muted" style="margin:14px 0 0;font-size:12.5px;text-align:center">Para tenerla como app: tocá <b>Compartir</b> y elegí <b>Agregar a inicio</b>.</p>`;
+  return '';
+}
+function pintarInstalar(){ const el = document.getElementById('install-box'); if(el) el.innerHTML = htmlInstalar(); }
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); _instalarEvt = e; pintarInstalar(); });
+window.addEventListener('appinstalled', () => { _instalarEvt = null; pintarInstalar(); });
+async function instalarApp(){
+  if(!_instalarEvt) return;
+  const ev = _instalarEvt; _instalarEvt = null;
+  try{ ev.prompt(); await ev.userChoice; } catch(e){ console.warn(e); }
+  pintarInstalar();
+}
+
 // ---------- Vistas ----------
 function vLogin(){
   let email = '';
@@ -236,6 +259,7 @@ function vLogin(){
     <div class="field"><label for="lg-pass">Contraseña</label><input class="in" id="lg-pass" type="password" autocomplete="current-password"></div>
     <button class="btn primary block" id="btn-login" data-act="login">Ingresar</button>
     <div class="err" id="lg-err" role="alert"></div>
+    <div id="install-box">${htmlInstalar()}</div>
   </div><div class="login-foot">APEX Rental Manager · Cotizador</div></div></div>`;
 }
 
@@ -897,6 +921,7 @@ async function accion(act, el){
   const i = el && el.dataset.i !== undefined ? Number(el.dataset.i) : null;
   switch(act){
     case 'login': return hacerLogin();
+    case 'instalar-app': return instalarApp();
     case 'cerrar-ov': return cerrarOverlay();
     case 'tema': return alternarTema();
     case 'estado-chip':

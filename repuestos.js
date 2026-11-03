@@ -393,7 +393,8 @@ async function rGenerarPdf(modo){
   const cerrar = busy('Generando PDF…');
   try{
     await new Promise(r => setTimeout(r, 40));
-    const { doc, fileName } = generarRepuestosPDF(rCotDesde(p));
+    const cot = rCotDesde(p); await rPrecargarFotos(cot.items);
+    const { doc, fileName } = generarRepuestosPDF(cot);
     if(modo === 'ver'){ await abrirVisorPdf(doc, fileName, { numero: p.numero, clientes: { razon_social: rNombre(p) } }); cerrar(); }
     else { cerrar(); await compartirPdf(doc, fileName); }
   } catch(e){ cerrar(); console.error(e); toast('No se pudo generar el PDF: ' + rErrTxt(e), 'err'); }
