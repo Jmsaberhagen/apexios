@@ -76,7 +76,7 @@ function renderRepuestos(){
 }
 function rChips(){
   const cuenta = f => R.list.filter(p => f === 'todos' ? true : estadoVista(p) === f).length;
-  const chips = [['todos', 'Todos'], ['vigente', 'Vigentes'], ['vencido', 'Vencidos'], ['anulado', 'Anulados']];
+  const chips = [['todos', 'Todos'], ['vigente', 'Vigentes'], ['confirmado', 'Confirmados'], ['facturado', 'Facturados'], ['vencido', 'Vencidos'], ['anulado', 'Anulados']];
   return `<div class="chips" id="rchips">${chips.map(([k, l]) => `<button class="chip ${R.filtro === k ? 'on' : ''}" data-act="rfiltro" data-v="${k}">${l}<span class="n">${cuenta(k)}</span></button>`).join('')}</div>`;
 }
 function rCards(){
@@ -118,23 +118,24 @@ function rCalcDe(p){
 function rResumenHtml(c){
   const l = (a, b, strong) => `<div class="linea"><span>${a}</span><b${strong ? ' style="font-size:15px"' : ''}>${b}</b></div>`;
   return `<div class="grupo" style="margin-top:0">
-    ${l('Subtotal lista', rNum2(c.subtotal))}
-    ${c.descPct > 0 ? l(`Descuento ${String(c.descPct).replace('.', ',')}%`, '− ' + rNum2(c.descuento)) : ''}
+    ${l('Subtotal (precio final)', rNum2(c.subtotal))}
+    ${c.descPct > 0 ? l(`Descuento ${String(c.descPct).replace('.', ',')}% (ya aplicado, el cliente no lo ve)`, rNum2(c.descuento)) : ''}
     ${c.envio > 0 ? l('Envío', rNum2(c.envio)) : ''}
-    ${l('Total neto', rNum2(c.neto))}
-    ${l(`IVA ${String(c.ivaPct).replace('.', ',')}%`, rNum2(c.iva))}
-    ${l('Total', rNum2(c.total), true)}
+    ${l('Total (sin impuestos)', rNum2(c.total), true)}
     ${c.tc > 0 ? l('Total en pesos', '$ ' + rpN0(c.totalArs)) : ''}
   </div>`;
 }
 function rVDetail(){
   const p = R.rec, st = estadoVista(p), c = rCalcDe(p);
-  const editable = puede('haulotte_presupuestos', 'crear') && st !== 'anulado';
-  const anulable = puede('haulotte_presupuestos', 'anular') && st !== 'anulado';
+  const editable = puede('haulotte_presupuestos', 'crear') && p.estado === 'vigente';
+  const confirmable = puede('haulotte_presupuestos', 'crear') && p.estado === 'vigente';
+  const facturable = puede('haulotte_presupuestos', 'crear') && p.estado === 'confirmado';
+  const anulable = puede('haulotte_presupuestos', 'anular') && st !== 'anulado' && p.estado !== 'facturado';
   const venc = (() => { const d = new Date(String(p.fecha_emision).slice(0, 10) + 'T12:00:00'); d.setDate(d.getDate() + (Number(p.validez_dias) || 0)); return fmtDate(d.toLocaleDateString('en-CA')); })();
   const items = p.haulotte_presupuesto_items.map(i => `<div class="grupo"><div class="gh"><b>${esc(i.codigo)}</b></div>
       <div class="dim" style="font-size:13px;margin:-2px 0 6px">${esc(i.descripcion)}</div>
-      <div class="linea"><span>${esc(i.cantidad)} × ${esc(rNum2(i.precio_unitario))}</span><b>${esc(rNum2(Number(i.cantidad) * Number(i.precio_unitario)))}</b></div></div>`).join('');
+      <div class="linea"><span>${esc(i.cantidad)} × ${esc(rNum2(rpR2(Number(i.precio_unitario) * (1 - c.descPct / 100))))}</span><b>${esc(rNum2(rpR2(Number(i.cantidad) * rpR2(Number(i.precio_unitario) * (1 - c.descPct / 100)))))}</b></div>
+      <div class="dim" style="font-size:12.5px">Disponibilidad: ${esc(textoDisponibilidad(i.disponibilidad))}</div></div>`).join('');
   return `<div class="screen">
     <header class="appbar"><button class="icon-btn" data-act="volver" aria-label="Volver">${ic('back')}</button>
       <div class="bar-title">${esc(numeroTexto(p))}<span class="bar-sub">${esc(rNombre(p))}</span></div><span id="chip-slot">${chipEstado()}</span></header>
@@ -145,7 +146,7 @@ function rVDetail(){
         ${p.contacto_nombre ? `<div class="dim">${esc(p.contacto_nombre)}${p.contacto_telefono ? ' · ' + esc(p.contacto_telefono) : ''}</div>` : ''}
         <div class="big"><span class="dim">Total</span><b>${esc(rNum2(c.total))}</b></div>
         ${c.tc > 0 ? `<div class="dim" style="text-align:right;font-size:13px;margin-top:2px">$ ${rpN0(c.totalArs)} al TC $ ${rpN2(c.tc)}</div>` : ''}
-        <div class="kv"><div><small>Emisión</small><b>${fmtDate(p.fecha_emision)}</b></div><div><small>Válido hasta</small><b>${venc}</b></div></div>
+        <div class="kv"><div><small>Emisión</small><b>${fmtDate(p.fecha_emision)}</b></div><div><small>Válido hasta</small><b>${venc}</b></div>${p.confirmado_el ? `<div><small>Confirmado</small><b>${fmtDate(String(p.confirmado_el).slice(0, 10))}</b></div>` : ''}${p.factura_nro ? `<div><small>Factura</small><b>${esc(p.factura_nro)}</b></div>` : ''}</div>
       </section>
       ${st === 'anulado' && p.motivo_anulacion ? `<div class="banner danger" style="margin-top:12px">${ic('ban')}<div><b>Motivo de anulación</b>${esc(p.motivo_anulacion)}</div></div>` : ''}
       <div class="sec-title">Repuestos</div>${items || '<div class="dim">Sin ítems.</div>'}
@@ -153,6 +154,8 @@ function rVDetail(){
       ${p.notas ? `<div class="sec-title">Notas</div><div class="dim" style="white-space:pre-wrap">${esc(p.notas)}</div>` : ''}
       <div class="actions">
         <div class="actions two" style="margin:0"><button class="btn primary" data-act="rver-pdf">${ic('eye')}Ver PDF</button><button class="btn" data-act="rpdf">${ic('share')}Compartir</button></div>
+        ${confirmable ? `<button class="btn" style="border-color:var(--ok);color:var(--ok)" data-act="rconfirmar">${ic('check')}Confirmar presupuesto</button>` : ''}
+        ${facturable ? `<button class="btn" data-act="rfacturado">${ic('check')}Marcar como facturado</button>` : ''}
         <div class="actions two" style="margin:0">${editable ? `<button class="btn" data-act="reditar">${ic('edit')}Editar</button>` : ''}${anulable ? `<button class="btn danger" data-act="ranular">${ic('ban')}Anular</button>` : ''}</div>
       </div>
     </main></div>`;
@@ -163,32 +166,37 @@ const rTxt = n => (n === null || n === undefined || n === '') ? '' : fmtNumInput
 function nuevoRE(){
   return { rec: null, dirty: false, descManual: false, items: [],
     d: { cliente_id: null, cliente_nombre: '', empresa_nombre: '', contacto_nombre: '', contacto_email: '', contacto_telefono: '',
-      fecha_emision: isoADmy(hoyIso()), validez_dias: '7', margen_txt: String(MARGEN_REPUESTOS_DEFECTO), desc_txt: '', envio_txt: '', iva_txt: String(IVA_REPUESTOS),
+      fecha_emision: isoADmy(hoyIso()), validez_dias: '7', margen_txt: String(MARGEN_REPUESTOS_DEFECTO), desc_txt: '', envio_txt: '',
       tc_txt: '', tc_fuente: null, tc_fecha: null, condicion_pago: '', notas: '' } };
 }
 function reDesde(p){
   return { rec: p, dirty: false, descManual: true,
-    items: p.haulotte_presupuesto_items.map(i => ({ codigo: i.codigo, descripcion: i.descripcion, cantidad: Number(i.cantidad) || 1, costo: Number(i.costo_unitario) || 0 })),
+    items: p.haulotte_presupuesto_items.map(i => ({ codigo: i.codigo, descripcion: i.descripcion, cantidad: Number(i.cantidad) || 1, costo: Number(i.costo_unitario) || 0, disponibilidad: i.disponibilidad || null, costoEditado: true })),
     d: { cliente_id: p.cliente_id || null, cliente_nombre: (p.clientes && p.clientes.razon_social) || '', empresa_nombre: p.empresa_nombre || '',
       contacto_nombre: p.contacto_nombre || '', contacto_email: p.contacto_email || '', contacto_telefono: p.contacto_telefono || '',
       fecha_emision: isoADmy(p.fecha_emision), validez_dias: String(p.validez_dias || 7),
       margen_txt: rTxt(p.margen_pct), desc_txt: Number(p.descuento_pct) > 0 ? rTxt(p.descuento_pct) : '', envio_txt: Number(p.envio_usd) > 0 ? rTxt(p.envio_usd) : '',
-      iva_txt: rTxt(p.iva_pct), tc_txt: rTxt(p.tipo_cambio), tc_fuente: p.tipo_cambio_fuente || null, tc_fecha: p.tipo_cambio_fecha || null,
+      tc_txt: rTxt(p.tipo_cambio), tc_fuente: p.tipo_cambio_fuente || null, tc_fecha: p.tipo_cambio_fecha || null,
       condicion_pago: p.condicion_pago || '', notas: p.notas || '' } };
 }
 function reCalc(){
   const d = R.ed.d;
   return calcularRepuestos({ items: R.ed.items, margen_pct: d.margen_txt === '' ? '' : parseNum(d.margen_txt), descuento_pct: parseNum(d.desc_txt),
-    envio_usd: parseNum(d.envio_txt), iva_pct: d.iva_txt === '' ? '' : parseNum(d.iva_txt), tc: parseNum(d.tc_txt) });
+    envio_usd: parseNum(d.envio_txt), tc: parseNum(d.tc_txt) });
 }
 function rfld(label, key, o){
   o = o || {};
   const v = R.ed.d[key] == null ? '' : R.ed.d[key];
   return `<div class="field"><label>${esc(label)}</label><input class="in" type="text" data-rf="${key}" value="${esc(v)}"${o.mask ? ' data-mask="date"' : ''}${o.ph ? ` placeholder="${esc(o.ph)}"` : ''}${o.im ? ` inputmode="${o.im}"` : ''} autocomplete="off"></div>`;
 }
+function rOpcionesDisp(it){
+  return '<option value="">— elegir —</option>' + opcionesDisponibilidad(it.cantidad).map(o => `<option value="${o.v}"${it.disponibilidad === o.v ? ' selected' : ''}>${esc(o.t)}</option>`).join('');
+}
+const rEsNacional = it => /^a-/i.test(String(it.codigo || '').trim());      // "A-": costo de lista no real, se carga a mano
+const rPuedeMargen = () => puede('haulotte_presupuestos', 'margen');
 function rItemHtml(it, i, calc){
   const ci = calc.items.find(x => x.codigo === it.codigo);
-  const lista = ci ? ci.lista : rpR2(rpNum(it.costo) * (1 + calc.margen / 100));
+  const unit = ci ? ci.unit : rpR2(rpR2(rpNum(it.costo) * (1 + calc.margen / 100)) * (1 - calc.descPct / 100));
   return `<div class="item" data-i="${i}">
     <div class="item-head"><div class="nm" style="flex:1"><b>${esc(it.codigo)}</b><small>${esc(it.descripcion)}</small></div>
       <button class="icon-btn" data-act="rquitar-item" data-i="${i}" aria-label="Quitar">${ic('x')}</button></div>
@@ -196,9 +204,11 @@ function rItemHtml(it, i, calc){
       <div class="qty"><button type="button" data-act="rqty-" data-i="${i}" aria-label="Menos">−</button>
         <input data-i="${i}" data-rk="cantidad" inputmode="numeric" value="${esc(it.cantidad)}" aria-label="Cantidad">
         <button type="button" data-act="rqty+" data-i="${i}" aria-label="Más">+</button></div>
-      <div class="dim" style="font-size:12.5px;align-self:center;flex:1;text-align:right">Lista ${esc(rNum2(lista))} c/u</div>
-      <div class="sub" data-rsub="${i}">${esc(rNum2(rpR2(lista * rpNum(it.cantidad))))}</div>
-    </div></div>`;
+      <div class="dim" style="font-size:12.5px;align-self:center;flex:1;text-align:right">${esc(rNum2(unit))} c/u</div>
+      <div class="sub" data-rsub="${i}">${esc(rNum2(rpR2(unit * rpNum(it.cantidad))))}</div>
+    </div>
+    ${rEsNacional(it) ? `<div class="field" style="margin:10px 0 0"><label>Costo ARG (artículo nacional: cargá el costo real)</label><div class="price"><span>U$D</span><input class="in" data-rk="costo" data-i="${i}" inputmode="decimal" value="${esc(rTxt(it.costo))}" style="${it.costoEditado ? '' : 'border-color:#f59e0b'}"></div></div>` : ''}
+    <div class="field" style="margin:10px 0 0"><label>Disponibilidad</label><select class="in" data-rk="disp" data-i="${i}">${rOpcionesDisp(it)}</select></div></div>`;
 }
 function rVEditor(){
   const d = R.ed.d, c = reCalc();
@@ -222,13 +232,10 @@ function rVEditor(){
       <div class="sec-title">Condiciones</div>
       <div class="grid2">${rfld('Fecha de emisión', 'fecha_emision', { mask: 1, ph: 'DD/MM/AAAA', im: 'numeric' })}${rfld('Validez (días)', 'validez_dias', { im: 'numeric' })}</div>
       <div class="grid2">
-        <div class="field"><label>Margen sobre costo</label><div class="price"><span>%</span><input class="in" data-rf="margen_txt" inputmode="decimal" value="${esc(d.margen_txt)}"></div></div>
+        <div class="field"><label>Margen sobre costo</label><div class="price"><span>%</span><input class="in" data-rf="margen_txt" inputmode="decimal" value="${esc(d.margen_txt)}"${rPuedeMargen() ? '' : ' disabled'}></div>${rPuedeMargen() ? '' : '<div class="hint">Bloqueado: requiere permiso</div>'}</div>
         <div class="field"><label>Descuento cliente</label><div class="price"><span>%</span><input class="in" data-rf="desc_txt" inputmode="decimal" placeholder="Sin descuento" value="${esc(d.desc_txt)}"></div></div>
       </div>
-      <div class="grid2">
-        <div class="field"><label>Costo de envío (U$D neto)</label><div class="price"><span>U$D</span><input class="in" data-rf="envio_txt" inputmode="decimal" placeholder="0,00" value="${esc(d.envio_txt)}"></div></div>
-        <div class="field"><label>IVA</label><div class="price"><span>%</span><input class="in" data-rf="iva_txt" inputmode="decimal" value="${esc(d.iva_txt)}"></div></div>
-      </div>
+      <div class="field"><label>Costo de envío (U$D, sin impuestos)</label><div class="price"><span>U$D</span><input class="in" data-rf="envio_txt" inputmode="decimal" placeholder="0,00" value="${esc(d.envio_txt)}"></div></div>
       <div class="field"><label>Tipo de cambio</label>
         <div class="tc-row"><div class="price" style="flex:1"><span>$</span><input class="in" data-rf="tc_txt" inputmode="decimal" placeholder="0,00" value="${esc(d.tc_txt)}"></div>
           <button class="btn sm" data-act="rtc-bna">${ic('refresh')}BNA</button></div>
@@ -252,9 +259,9 @@ function rRecalc(){
   const r = $('#rr-res'); if(r) r.innerHTML = rResumenHtml(c);
   const t = $('#red-total'); if(t) t.textContent = rNum2(c.total);
   R.ed.items.forEach((it, i) => {
-    const lista = rpR2(rpNum(it.costo) * (1 + c.margen / 100));
-    const s = document.querySelector(`[data-rsub="${i}"]`); if(s) s.textContent = rNum2(rpR2(lista * rpNum(it.cantidad)));
-    const row = document.querySelector(`.item[data-i="${i}"] .dim`); if(row) row.textContent = `Lista ${rNum2(lista)} c/u`;
+    const unit = rpR2(rpR2(rpNum(it.costo) * (1 + c.margen / 100)) * (1 - c.descPct / 100));
+    const s = document.querySelector(`[data-rsub="${i}"]`); if(s) s.textContent = rNum2(rpR2(unit * rpNum(it.cantidad)));
+    const row = document.querySelector(`.item[data-i="${i}"] .dim`); if(row) row.textContent = `${rNum2(unit)} c/u`;
   });
 }
 async function rBuscarTc(silencioso){
@@ -331,16 +338,21 @@ async function rGuardar(){
   if(!R.ed) return;
   if(!navigator.onLine) return toast('Sin conexión. Este cotizador necesita internet para guardar.', 'err');
   if(!rValidar()) return;
+  const sinCosto = R.ed.items.filter(i => Number(i.cantidad) > 0 && rEsNacional(i) && !i.costoEditado);
+  if(sinCosto.length){
+    const ok = await confirmar({ titulo: 'Costo de artículos nacionales', texto: `${sinCosto.map(i => i.codigo).join(', ')}: todavía tienen el costo de la lista, que no es el real. ¿Guardar igual?`, ok: 'Guardar igual', cancelar: 'Corregir costo' });
+    if(!ok) return;
+  }
   const d = R.ed.d, c = reCalc();
   const cab = {
     cliente_id: d.cliente_id || null, empresa_nombre: d.cliente_id ? null : (d.empresa_nombre.trim() || null),
     contacto_nombre: d.contacto_nombre.trim() || null, contacto_email: d.contacto_email.trim() || null, contacto_telefono: d.contacto_telefono.trim() || null,
     fecha_emision: dmyAIso(d.fecha_emision), validez_dias: Number(d.validez_dias) || 7, moneda: 'USD',
-    margen_pct: c.margen, descuento_pct: c.descPct, envio_usd: c.envio, iva_pct: c.ivaPct,
+    margen_pct: c.margen, descuento_pct: c.descPct, envio_usd: c.envio, iva_pct: 0,
     tipo_cambio: c.tc > 0 ? c.tc : null, tipo_cambio_fuente: c.tc > 0 ? (d.tc_fuente || 'Manual') : null, tipo_cambio_fecha: c.tc > 0 ? (d.tc_fecha || null) : null,
     condicion_pago: d.condicion_pago.trim() || null, notas: d.notas.trim() || null, total_usd: c.total, items_count: c.items.length,
   };
-  const items = c.items.map((it, i) => ({ codigo: it.codigo, descripcion: it.descripcion, cantidad: Number(it.cantidad), costo_unitario: it.costo, precio_unitario: it.lista, orden: i }));
+  const items = c.items.map((it, i) => ({ codigo: it.codigo, descripcion: it.descripcion, cantidad: Number(it.cantidad), costo_unitario: it.costo, precio_unitario: it.lista, disponibilidad: it.disponibilidad || null, orden: i }));
   const cerrar = busy('Guardando…');
   try{
     let pid = R.ed.rec && R.ed.rec.id;
@@ -373,8 +385,8 @@ function rAbrirAnular(p){
 function rCotDesde(p){
   return { numero: p.numero, fecha_emision: p.fecha_emision, validez_dias: p.validez_dias, cliente: p.clientes, empresa_nombre: p.empresa_nombre,
     contacto_nombre: p.contacto_nombre, contacto_email: p.contacto_email, contacto_telefono: p.contacto_telefono, condicion_pago: p.condicion_pago, notas: p.notas,
-    items: p.haulotte_presupuesto_items.map(i => ({ codigo: i.codigo, descripcion: i.descripcion, cantidad: i.cantidad, precio_unitario: i.precio_unitario })),
-    descuento_pct: p.descuento_pct, envio_usd: p.envio_usd, iva_pct: p.iva_pct, tc: p.tipo_cambio, tc_fecha: p.tipo_cambio_fecha };
+    items: p.haulotte_presupuesto_items.map(i => ({ codigo: i.codigo, descripcion: i.descripcion, cantidad: i.cantidad, precio_unitario: i.precio_unitario, disponibilidad: i.disponibilidad })),
+    descuento_pct: p.descuento_pct, envio_usd: p.envio_usd, tc: p.tipo_cambio, tc_fecha: p.tipo_cambio_fecha };
 }
 async function rGenerarPdf(modo){
   const p = R.rec; if(!p) return;
@@ -433,9 +445,36 @@ async function accionRepuestos(act, el){
     case 'rqty-': case 'rqty+': {
       const it = R.ed.items[i]; it.cantidad = Math.max(1, (Number(it.cantidad) || 1) + (act === 'rqty+' ? 1 : -1));
       const inp = document.querySelector(`input[data-rk="cantidad"][data-i="${i}"]`); if(inp) inp.value = it.cantidad;
+      it.disponibilidad = disponibilidadValida(it.disponibilidad, it.cantidad); rRefrescarDisp(i);
       R.ed.dirty = true; return rRecalc();
     }
     case 'rtc-bna': return rBuscarTc(false);
+    case 'rconfirmar': {
+      const p = R.rec; if(!p) return;
+      if(!navigator.onLine) return toast('Sin conexión.', 'err');
+      const ok = await confirmar({ titulo: 'Confirmar presupuesto', texto: `${numeroTexto(p)} queda como pendiente de facturar y ya no se puede editar.`, ok: 'Confirmar', cancelar: 'Volver' });
+      if(!ok) return;
+      const cerrar = busy('Confirmando…');
+      try{
+        const { error } = await sb.from('haulotte_presupuestos').update({ estado: 'confirmado', confirmado_el: new Date().toISOString(), confirmado_por: (S.perfil && S.perfil.nombre) || null, updated_at: new Date().toISOString() }).eq('id', p.id).eq('estado', 'vigente');
+        if(error) throw error;
+        R.rec = await traerRCompleto(p.id); R.cargadoEn = 0; render(); toast('Presupuesto confirmado', 'ok');
+      } catch(e){ toast('No se pudo confirmar: ' + rErrTxt(e), 'err'); }
+      cerrar(); return;
+    }
+    case 'rfacturado': {
+      const p = R.rec; if(!p) return;
+      if(!navigator.onLine) return toast('Sin conexión.', 'err');
+      const nro = window.prompt(`Marcar ${numeroTexto(p)} como facturado.\nN° de factura (opcional):`, '');
+      if(nro === null) return;
+      const cerrar = busy('Guardando…');
+      try{
+        const { error } = await sb.from('haulotte_presupuestos').update({ estado: 'facturado', facturado_el: new Date().toISOString(), facturado_por: (S.perfil && S.perfil.nombre) || null, factura_nro: nro.trim() || null, updated_at: new Date().toISOString() }).eq('id', p.id).eq('estado', 'confirmado');
+        if(error) throw error;
+        R.rec = await traerRCompleto(p.id); R.cargadoEn = 0; render(); toast('Marcado como facturado', 'ok');
+      } catch(e){ toast('No se pudo guardar: ' + rErrTxt(e), 'err'); }
+      cerrar(); return;
+    }
   }
 }
 document.addEventListener('input', e => {
@@ -449,16 +488,28 @@ document.addEventListener('input', e => {
     if(t.dataset.rf === 'tc_txt'){ R.ed.d.tc_fuente = 'Manual'; R.ed.d.tc_fecha = null; const h = $('#rtc-hint'); if(h) h.textContent = rTcHint(); }
     return rRecalc();
   }
+  if(t.dataset.rk === 'costo'){
+    const it = R.ed.items[Number(t.dataset.i)]; if(!it) return;
+    it.costo = Math.max(0, parseNum(t.value)); it.costoEditado = true; t.style.borderColor = ''; R.ed.dirty = true; rRecalc(); return;
+  }
   if(t.dataset.rk === 'cantidad'){
     const it = R.ed.items[Number(t.dataset.i)]; if(!it) return;
-    it.cantidad = Math.max(0, parseInt(String(t.value).replace(/\D/g, ''), 10) || 0); R.ed.dirty = true; rRecalc();
+    it.cantidad = Math.max(0, parseInt(String(t.value).replace(/\D/g, ''), 10) || 0); R.ed.dirty = true;
+    it.disponibilidad = disponibilidadValida(it.disponibilidad, it.cantidad); rRefrescarDisp(Number(t.dataset.i)); rRecalc();
   }
+});
+function rRefrescarDisp(i){
+  const sel = document.querySelector(`select[data-rk="disp"][data-i="${i}"]`); if(sel && R.ed.items[i]) sel.innerHTML = rOpcionesDisp(R.ed.items[i]);
+}
+document.addEventListener('change', e => {
+  const t = e.target;
+  if(R.ed && t.dataset && t.dataset.rk === 'disp'){ const it = R.ed.items[Number(t.dataset.i)]; if(it){ it.disponibilidad = t.value || null; R.ed.dirty = true; } }
 });
 document.addEventListener('focusout', e => {
   const t = e.target;
   if(!R.ed || !t.dataset.rf) return;
-  if(['margen_txt', 'desc_txt', 'envio_txt', 'iva_txt', 'tc_txt'].includes(t.dataset.rf)){
-    const n = parseNum(t.value); R.ed.d[t.dataset.rf] = (t.value.trim() === '' || (!n && t.dataset.rf !== 'margen_txt' && t.dataset.rf !== 'iva_txt')) ? '' : fmtNumInput(n);
+  if(['margen_txt', 'desc_txt', 'envio_txt', 'tc_txt'].includes(t.dataset.rf)){
+    const n = parseNum(t.value); R.ed.d[t.dataset.rf] = (t.value.trim() === '' || (!n && t.dataset.rf !== 'margen_txt')) ? '' : fmtNumInput(n);
     t.value = R.ed.d[t.dataset.rf]; rRecalc();
   }
 });

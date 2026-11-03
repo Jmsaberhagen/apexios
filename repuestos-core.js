@@ -1,6 +1,6 @@
 // =====================================================================
 // PRESUPUESTO DE REPUESTOS HAULOTTE — cálculo + PDF (lo usan APEX web y la app Android)
-// Precio de lista = costo ARG × (1 + margen). Descuento del cliente sobre la lista. Envío y IVA al final.
+// Precio de lista = costo ARG × (1 + margen). El PDF muestra el precio final con el descuento ya aplicado. No se cotiza IVA.
 // =====================================================================
 const MARGEN_REPUESTOS_DEFECTO = 60;   // % sobre costo
 const IVA_REPUESTOS = 21;              // %
@@ -9,30 +9,50 @@ const rpN2 = v => Number(v).toLocaleString('es-AR', { minimumFractionDigits: 2, 
 const rpN0 = v => Number(v).toLocaleString('es-AR', { maximumFractionDigits: 0 });
 const rpNum = v => { const n = Number(v); return isFinite(n) ? n : 0; };
 
-// o: { items:[{codigo, descripcion, cantidad, costo}], margen_pct, descuento_pct, envio_usd, iva_pct, tc }
+// o: { items:[{codigo, descripcion, cantidad, costo}], margen_pct, descuento_pct, envio_usd, tc }
+// Lista = costo × (1 + margen). El cliente ve el precio FINAL: lista × (1 − descuento). No se cotiza IVA.
 function calcularRepuestos(o){
   const margen = o.margen_pct === '' || o.margen_pct == null ? MARGEN_REPUESTOS_DEFECTO : Math.max(rpNum(o.margen_pct), 0);
+  const descPct = Math.min(Math.max(rpNum(o.descuento_pct), 0), 99.99);
   const items = (o.items || []).filter(i => rpNum(i.cantidad) > 0).map(i => {
     const lista = rpR2(rpNum(i.costo) * (1 + margen / 100));
-    return { ...i, lista, sub: rpR2(lista * rpNum(i.cantidad)) };
+    const unit = rpR2(lista * (1 - descPct / 100));
+    return { ...i, lista, unit, sub: rpR2(unit * rpNum(i.cantidad)) };
   });
   const subtotal = rpR2(items.reduce((a, i) => a + i.sub, 0));
-  const descPct = Math.min(Math.max(rpNum(o.descuento_pct), 0), 99.99);
-  const descuento = rpR2(subtotal * descPct / 100);
+  const bruto = rpR2(items.reduce((a, i) => a + i.lista * rpNum(i.cantidad), 0));
+  const descuento = rpR2(bruto - subtotal);                       // solo para uso interno (el PDF no lo muestra)
   const envio = rpR2(Math.max(rpNum(o.envio_usd), 0));
-  const neto = rpR2(subtotal - descuento + envio);
-  const ivaPct = o.iva_pct === '' || o.iva_pct == null ? IVA_REPUESTOS : rpNum(o.iva_pct);
-  const iva = rpR2(neto * ivaPct / 100);
-  const total = rpR2(neto + iva);
+  const neto = rpR2(subtotal + envio);
+  const total = neto;
   const tc = rpNum(o.tc);
-  return { items, margen, subtotal, descPct, descuento, envio, neto, ivaPct, iva, total, tc, totalArs: Math.round(total * tc) };
+  return { items, margen, bruto, descPct, descuento, subtotal, envio, neto, ivaPct: 0, iva: 0, total, tc, totalArs: Math.round(total * tc) };
 }
-// Desde un presupuesto ya guardado (precio_unitario = lista): se recalcula con margen 0 sobre esos precios
+// Desde un presupuesto ya guardado (precio_unitario = lista): margen 0 sobre esos precios, con el descuento guardado
 function calcularRepuestosGuardado(p, items){
   return calcularRepuestos({
     items: (items || []).map(i => ({ cantidad: i.cantidad, costo: i.precio_unitario })),
-    margen_pct: 0, descuento_pct: p.descuento_pct, envio_usd: p.envio_usd, iva_pct: p.iva_pct, tc: p.tipo_cambio,
+    margen_pct: 0, descuento_pct: p.descuento_pct, envio_usd: p.envio_usd, tc: p.tipo_cambio,
   });
+}
+// Disponibilidad por renglón: "disp:N" (N unidades disponibles) o "dias:N" (demora en traerlo)
+const DIAS_DEMORA_REPUESTOS = [5, 10, 15, 20, 25, 30, 60, 90];
+function opcionesDisponibilidad(cantidad){
+  const n = Math.min(Math.max(parseInt(cantidad, 10) || 0, 0), 100);
+  const o = [];
+  for(let i = 1; i <= n; i++) o.push({ v: 'disp:' + i, t: 'Disponible ' + i });
+  DIAS_DEMORA_REPUESTOS.forEach(d => o.push({ v: 'dias:' + d, t: d + ' días' }));
+  return o;
+}
+function textoDisponibilidad(v){
+  const m = /^(disp|dias):(\d+)$/.exec(String(v || ''));
+  if(!m) return '—';
+  return m[1] === 'disp' ? (m[2] === '1' ? '1 disponible' : m[2] + ' disponibles') : m[2] + ' días';
+}
+// Si cambia la cantidad y la opción "Disponible N" ya no entra, se descarta
+function disponibilidadValida(v, cantidad){
+  const m = /^disp:(\d+)$/.exec(String(v || ''));
+  return m && Number(m[1]) > Number(cantidad) ? null : (v || null);
 }
 
 // cot: { numero, fecha_emision, validez_dias, cliente:{razon_social}, empresa_nombre, contacto_*, condicion_pago, notas,
@@ -40,7 +60,7 @@ function calcularRepuestosGuardado(p, items){
 function generarRepuestosPDF(cot){
   const calc = calcularRepuestos({
     items: cot.items.map(i => ({ ...i, costo: i.precio_unitario })), margen_pct: 0,
-    descuento_pct: cot.descuento_pct, envio_usd: cot.envio_usd, iva_pct: cot.iva_pct, tc: cot.tc,
+    descuento_pct: cot.descuento_pct, envio_usd: cot.envio_usd, tc: cot.tc,
   });
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
@@ -68,12 +88,12 @@ function generarRepuestosPDF(cot){
     return y + 8;
   };
   const titulo = (txt, y) => { doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(0); doc.text(txt, marginX, y); return y + 6; };
-  const X = { cod: marginX + 2, desc: marginX + 32, cant: 134, pu: 162, sub: R - 2 };
+  const X = { cod: marginX + 2, desc: marginX + 25, cant: 106, pu: 128, sub: 152, disp: 173 };
   const cabTabla = y => {
     doc.setFillColor(...NEGRO); doc.rect(marginX, y - 5, pageWidth - marginX * 2, 7, 'F');
     doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
     doc.text('Código', X.cod, y); doc.text('Descripción', X.desc, y);
-    doc.text('Cant.', X.cant, y, { align: 'right' }); doc.text('Precio unit. U$D', X.pu, y, { align: 'right' }); doc.text('Subtotal U$D', X.sub, y, { align: 'right' });
+    doc.text('Cant.', X.cant, y, { align: 'right' }); doc.text('P. unit. U$D', X.pu, y, { align: 'right' }); doc.text('Subtotal U$D', X.sub, y, { align: 'right' }); doc.text('Disponibilidad', X.disp, y, { align: 'center' });
     doc.setTextColor(0);
     return y + 8;
   };
@@ -92,25 +112,23 @@ function generarRepuestosPDF(cot){
   let z = 0;
   calc.items.forEach(it => {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
-    const ls = doc.splitTextToSize(it.descripcion || "", 70).slice(0, 3);
+    const ls = doc.splitTextToSize(it.descripcion || "", 56).slice(0, 3);
     const h = Math.max(ls.length * 4 + 2.5, 7);
     if(y + h > LIM){ doc.addPage(); y = encabezado(); y = cabTabla(y); z = 0; }
     if(z++ % 2 === 1){ doc.setFillColor(246, 247, 249); doc.rect(marginX, y - 4, pageWidth - marginX * 2, h, 'F'); }
     doc.setFont('helvetica', 'bold'); doc.text(String(it.codigo || ''), X.cod, y);
     doc.setFont('helvetica', 'normal'); doc.text(ls, X.desc, y);
     doc.text(String(it.cantidad), X.cant, y, { align: 'right' });
-    doc.text(rpN2(it.lista), X.pu, y, { align: 'right' });
+    doc.text(rpN2(it.unit), X.pu, y, { align: 'right' });
     doc.text(rpN2(it.sub), X.sub, y, { align: 'right' });
+    doc.text(textoDisponibilidad(it.disponibilidad), X.disp, y, { align: 'center' });
     y += h;
   });
   doc.setDrawColor(...NEGRO); doc.setLineWidth(0.4); doc.line(marginX, y - 2.5, R, y - 2.5);
 
   // ---------- Resumen ----------
   const filas = [['Subtotal', 'U$D ' + rpN2(calc.subtotal)]];
-  if(calc.descuento > 0) filas.push([`Descuento ${String(calc.descPct).replace('.', ',')}%`, '- U$D ' + rpN2(calc.descuento)]);
   if(calc.envio > 0) filas.push(['Envío', 'U$D ' + rpN2(calc.envio)]);
-  filas.push(['Total neto', 'U$D ' + rpN2(calc.neto)]);
-  filas.push([`IVA ${String(calc.ivaPct).replace('.', ',')}%`, 'U$D ' + rpN2(calc.iva)]);
   filas.push(['TOTAL U$D', 'U$D ' + rpN2(calc.total), true]);
   if(calc.tc > 0){ filas.push(['Tipo de cambio de referencia', '$ ' + rpN2(calc.tc)]); filas.push(['TOTAL EN PESOS', '$ ' + rpN0(calc.totalArs), true]); }
   const altoBox = filas.length * 6.4 + 4;
@@ -131,11 +149,11 @@ function generarRepuestosPDF(cot){
   const notasLs = cot.notas ? doc.splitTextToSize(cot.notas, pageWidth - marginX * 2) : [];
   const fechaTc = cot.tc_fecha ? ` (${fmtDate(cot.tc_fecha)})` : '';
   const conds = [
-    `Precios expresados en dólares estadounidenses, netos de IVA. Se adiciona IVA (${String(calc.ivaPct).replace('.', ',')}%).`,
+    'Precios expresados en dólares estadounidenses. Los precios no incluyen ningún impuesto (IVA ni otros).',
     calc.tc > 0 ? `El pago se realiza en pesos, al tipo de cambio de referencia de $ ${rpN2(calc.tc)} por U$D${fechaTc}. Si al momento del pago existiera diferencia de cambio, se emitirá una nota de débito por dicha diferencia.` : null,
     cot.condicion_pago ? `Condición de pago: ${cot.condicion_pago}.` : null,
     calc.envio > 0 ? 'El costo de envío está incluido en el total.' : 'El envío no está incluido en esta cotización.',
-    'Los precios están sujetos a disponibilidad de stock al momento de confirmar el pedido.',
+    'La disponibilidad indicada en cada ítem corresponde al momento de la cotización; los plazos en días son estimados y se cuentan desde la confirmación del pedido.',
     `Validez de la oferta: ${cot.validez_dias || 7} días desde la fecha de emisión.`,
   ].filter(Boolean);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);

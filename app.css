@@ -166,7 +166,8 @@ input,select,textarea{font:inherit;color:inherit;}
   background:color-mix(in srgb,var(--c,var(--text-dim)) 14%,transparent);border:1px solid color-mix(in srgb,var(--c,var(--text-dim)) 40%,transparent);
 }
 .st-vigente{--c:var(--accent);--stripe:var(--accent);}
-.st-aceptado{--c:var(--ok);--stripe:var(--ok);}
+.st-aceptado,.st-confirmado{--c:var(--ok);--stripe:var(--ok);}
+.st-facturado{--c:#a29bfe;--stripe:#a29bfe;}
 .st-vencido{--c:var(--warn);--stripe:var(--warn);}
 .st-anulado{--c:var(--danger);--stripe:var(--danger);}
 .st-borrador{--c:#a78bfa;--stripe:#a78bfa;}

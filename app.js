@@ -34,7 +34,7 @@ const ICON = {
 const ic = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
 const apexMark = (px) => `<div class="apex-mark"><svg width="${px}" height="${px}" aria-hidden="true"><use href="#apex-pk"/></svg><div class="apex-word"><b>APEX</b><small>RENTAL MANAGER</small></div></div>`;
 
-const ESTADO_LABEL = { vigente:'Vigente', aceptado:'Aceptado', vencido:'Vencido', anulado:'Anulado', borrador:'Sin subir' };
+const ESTADO_LABEL = { vigente:'Vigente', aceptado:'Aceptado', confirmado:'Confirmado', facturado:'Facturado', vencido:'Vencido', anulado:'Anulado', borrador:'Sin subir' };
 
 // ---------- Estado de la interfaz ----------
 const V = { view:'login', last:null, filtro:'todos', q:'', thumbs:{}, loginMsg:'', soloStock:false, pdf:null };
