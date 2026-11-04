@@ -15,7 +15,8 @@ function calcularRepuestos(o){
   const margen = o.margen_pct === '' || o.margen_pct == null ? MARGEN_REPUESTOS_DEFECTO : Math.max(rpNum(o.margen_pct), 0);
   const descPct = Math.min(Math.max(rpNum(o.descuento_pct), 0), 99.99);
   const items = (o.items || []).filter(i => rpNum(i.cantidad) > 0).map(i => {
-    const lista = rpR2(rpNum(i.costo) * (1 + margen / 100));
+    const mg = (i.margen != null && i.margen !== '') ? Math.max(rpNum(i.margen), 0) : margen;   // A-: margen propio del renglón (siempre editable)
+    const lista = rpR2(rpNum(i.costo) * (1 + mg / 100));
     const unit = rpR2(lista * (1 - descPct / 100));
     return { ...i, lista, unit, sub: rpR2(unit * rpNum(i.cantidad)) };
   });

@@ -171,7 +171,8 @@ function nuevoRE(){
 }
 function reDesde(p){
   return { rec: p, dirty: false, descManual: true,
-    items: p.haulotte_presupuesto_items.map(i => ({ codigo: i.codigo, descripcion: i.descripcion, cantidad: Number(i.cantidad) || 1, costo: Number(i.costo_unitario) || 0, disponibilidad: i.disponibilidad || null, costoEditado: true })),
+    items: p.haulotte_presupuesto_items.map(i => ({ codigo: i.codigo, descripcion: i.descripcion, cantidad: Number(i.cantidad) || 1, costo: Number(i.costo_unitario) || 0, disponibilidad: i.disponibilidad || null, costoEditado: true,
+      margen: (rEsNacional(i) && Number(i.costo_unitario) > 0 && Number(i.precio_unitario) > 0) ? Math.round((Number(i.precio_unitario) / Number(i.costo_unitario) - 1) * 10000) / 100 : null })),
     d: { cliente_id: p.cliente_id || null, cliente_nombre: (p.clientes && p.clientes.razon_social) || '', empresa_nombre: p.empresa_nombre || '',
       contacto_nombre: p.contacto_nombre || '', contacto_email: p.contacto_email || '', contacto_telefono: p.contacto_telefono || '',
       fecha_emision: isoADmy(p.fecha_emision), validez_dias: String(p.validez_dias || 7),
@@ -192,11 +193,12 @@ function rfld(label, key, o){
 function rOpcionesDisp(it){
   return '<option value="">— elegir —</option>' + opcionesDisponibilidad(it.cantidad).map(o => `<option value="${o.v}"${it.disponibilidad === o.v ? ' selected' : ''}>${esc(o.t)}</option>`).join('');
 }
+const rMargenItem = (it, global) => (rEsNacional(it) && it.margen != null && it.margen !== '') ? Math.max(rpNum(it.margen), 0) : global;
 const rEsNacional = it => /^a-/i.test(String(it.codigo || '').trim());      // "A-": costo de lista no real, se carga a mano
 const rPuedeMargen = () => puede('haulotte_presupuestos', 'margen');
 function rItemHtml(it, i, calc){
   const ci = calc.items.find(x => x.codigo === it.codigo);
-  const unit = ci ? ci.unit : rpR2(rpR2(rpNum(it.costo) * (1 + calc.margen / 100)) * (1 - calc.descPct / 100));
+  const unit = ci ? ci.unit : rpR2(rpR2(rpNum(it.costo) * (1 + rMargenItem(it, calc.margen) / 100)) * (1 - calc.descPct / 100));
   return `<div class="item" data-i="${i}">
     <div class="item-head"><div class="nm" style="flex:1"><b>${esc(it.codigo)}</b><small>${esc(it.descripcion)}</small></div>
       <button class="icon-btn" data-act="rquitar-item" data-i="${i}" aria-label="Quitar">${ic('x')}</button></div>
@@ -208,6 +210,7 @@ function rItemHtml(it, i, calc){
       <div class="sub" data-rsub="${i}">${esc(rNum2(rpR2(unit * rpNum(it.cantidad))))}</div>
     </div>
     ${rEsNacional(it) ? `<div class="field" style="margin:10px 0 0"><label>Costo ARG (artículo nacional: cargá el costo real)</label><div class="price"><span>U$D</span><input class="in" data-rk="costo" data-i="${i}" inputmode="decimal" value="${esc(rTxt(it.costo))}" style="${it.costoEditado ? '' : 'border-color:#f59e0b'}"></div></div>` : ''}
+    ${rEsNacional(it) ? `<div class="field" style="margin:10px 0 0"><label>Margen de este artículo (siempre editable)</label><div class="price"><span>%</span><input class="in" data-rk="margen" data-i="${i}" inputmode="decimal" value="${esc(rTxt(it.margen != null && it.margen !== '' ? it.margen : calc.margen))}"></div></div>` : ''}
     <div class="field" style="margin:10px 0 0"><label>Disponibilidad</label><select class="in" data-rk="disp" data-i="${i}">${rOpcionesDisp(it)}</select></div></div>`;
 }
 function rVEditor(){
@@ -259,7 +262,7 @@ function rRecalc(){
   const r = $('#rr-res'); if(r) r.innerHTML = rResumenHtml(c);
   const t = $('#red-total'); if(t) t.textContent = rNum2(c.total);
   R.ed.items.forEach((it, i) => {
-    const unit = rpR2(rpR2(rpNum(it.costo) * (1 + c.margen / 100)) * (1 - c.descPct / 100));
+    const unit = rpR2(rpR2(rpNum(it.costo) * (1 + rMargenItem(it, c.margen) / 100)) * (1 - c.descPct / 100));
     const s = document.querySelector(`[data-rsub="${i}"]`); if(s) s.textContent = rNum2(rpR2(unit * rpNum(it.cantidad)));
     const row = document.querySelector(`.item[data-i="${i}"] .dim`); if(row) row.textContent = `${rNum2(unit)} c/u`;
   });
@@ -566,6 +569,10 @@ document.addEventListener('input', e => {
   if(t.dataset.rk === 'costo'){
     const it = R.ed.items[Number(t.dataset.i)]; if(!it) return;
     it.costo = Math.max(0, parseNum(t.value)); it.costoEditado = true; t.style.borderColor = ''; R.ed.dirty = true; rRecalc(); return;
+  }
+  if(t.dataset.rk === 'margen'){
+    const it = R.ed.items[Number(t.dataset.i)]; if(!it) return;
+    it.margen = String(t.value).trim() === '' ? null : Math.max(0, parseNum(t.value)); R.ed.dirty = true; rRecalc(); return;
   }
   if(t.dataset.rk === 'cantidad'){
     const it = R.ed.items[Number(t.dataset.i)]; if(!it) return;
