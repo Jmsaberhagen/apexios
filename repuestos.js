@@ -352,7 +352,9 @@ async function rpmBuscar(sh, mas){
   out.innerHTML = rpmFilasHtml();
 }
 async function abrirBuscadorPorModelo(){
-  abrirHoja('Repuestos por modelo', `<div class="field"><select class="in" id="pm-modelo"><option value="">Cargando modelos…</option></select></div>
+  abrirHoja('Repuestos por modelo', `<div class="search">${ic('search')}<input id="pm-modelo-q" type="search" placeholder="Modelo: escribí parte (HA16, HTL4017…)" autocomplete="off" disabled></div>
+    <input type="hidden" id="pm-modelo">
+    <div id="pm-modelo-lista" style="display:none;max-height:38vh;overflow:auto;margin:4px 0 8px"></div>
     <div class="search">${ic('search')}<input id="pm-q" type="search" placeholder="Filtrar: filtro, bomba, código…" autocomplete="off"></div>
     <div class="dim" id="pm-info" style="font-size:12px;margin:6px 2px"></div>
     <div id="pm-res"><div class="dim" style="text-align:center;padding:18px;font-size:13px">Elegí un modelo para ver sus repuestos</div></div>
@@ -360,17 +362,30 @@ async function abrirBuscadorPorModelo(){
     <button class="btn primary block" style="margin-top:10px" data-act="cerrar-ov">Listo</button>`, async sh => {
     window.__rpmSh = sh;
     let t;
-    $('#pm-modelo', sh).addEventListener('change', () => rpmBuscar(sh, false));
+    const qm = $('#pm-modelo-q', sh), lista = $('#pm-modelo-lista', sh);
+    const norm = x => String(x || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const mostrar = () => {
+      const toks = norm(qm.value).split(/[\s\/]+/).filter(Boolean);
+      let l = (rpmModelos || []).filter(m => toks.every(k => m.clave.includes(k)));
+      l = l.slice().sort((a, b) => ((toks.length && norm(a.corto).startsWith(toks[0])) ? 0 : 1) - ((toks.length && norm(b.corto).startsWith(toks[0])) ? 0 : 1) || a.corto.localeCompare(b.corto, 'es', { numeric: true }));
+      lista.innerHTML = l.length ? l.slice(0, 80).map(m => `<button class="opt" data-pm-mod="${esc(m.modelo)}"><div class="tx"><b>${esc(m.corto)}</b><small>${esc(m.tipo)} · ${m.cant} repuestos</small></div></button>`).join('')
+        : '<div class="dim" style="text-align:center;padding:14px;font-size:13px">Ningún modelo coincide</div>';
+      lista.style.display = '';
+    };
+    const elegir = modelo => { $('#pm-modelo', sh).value = modelo; qm.value = modelo; lista.style.display = 'none'; qm.blur(); rpmBuscar(sh, false); };
+    qm.addEventListener('focus', mostrar); qm.addEventListener('click', mostrar);
+    qm.addEventListener('input', () => { $('#pm-modelo', sh).value = ''; mostrar(); rpmBuscar(sh, false); });
+    lista.addEventListener('click', e => { const b = e.target.closest('[data-pm-mod]'); if(b) elegir(b.dataset.pmMod); });
     $('#pm-q', sh).addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => rpmBuscar(sh, false), 350); });
     try{
       if(!rpmModelos){
         const { data, error } = await sb.rpc('modelos_repuestos_gp');
         if(error) throw error;
-        rpmModelos = data || [];
+        rpmModelos = (data || []).map(m => { const corto = rModeloCorto(m.modelo); return { modelo: m.modelo, cant: m.cant, corto, tipo: String(m.modelo).replace(corto, '').trim(), clave: norm(m.modelo) }; });
       }
-      $('#pm-modelo', sh).innerHTML = '<option value="">Elegí un modelo de máquina…</option>' + rpmModelos.map(m => `<option value="${esc(m.modelo)}">${esc(m.modelo)} (${m.cant})</option>`).join('');
+      qm.disabled = false; qm.placeholder = 'Modelo: escribí parte (HA16, HTL4017…)';
     } catch(e){
-      $('#pm-modelo', sh).innerHTML = '<option value="">No se pudieron cargar los modelos</option>';
+      qm.placeholder = 'No se pudieron cargar los modelos';
       $('#pm-info', sh).textContent = navigator.onLine ? rErrTxt(e) : 'Sin conexión';
     }
   });
