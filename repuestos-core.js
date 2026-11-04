@@ -119,11 +119,15 @@ async function rPrecargarModelos(items){
     }
   } catch(e){ console.warn('No se pudieron cargar los modelos de uso:', e); }
 }
-function rModeloCorto(m){
-  const t = String(m || '').trim().split(/\s+/);
-  const i = t.findIndex(x => /\d/.test(x));
-  return (i > 0 ? t.slice(i) : t).join(' ');
+// El nombre que viene de MyHaulotte es "TIPO MODELO" (ej. "TIJERAS ELECTRICAS COMPACT 10N / COMPACT 2632E"). El tipo es una lista cerrada; todo lo demás es el modelo.
+const R_TIPOS_MAQUINA = ['CARROS TELESCOPICOS','CESTA ARTICULADA ELECTRICA','CESTA ARTICULADA TERMICA','CESTA SOBRE CAMION','CESTA TELESCOPICA','CESTA TRACCIONADA','ELECTRIC ARTICULATED PLATFORMS','ENGINE-POWERED ARTICULATED PLATFORMS','ELECTRIC SCISSOR LIFTS','TELESCOPIC HANDLERS','TELESCOPIC MASTS','TELESCOPIC PLATFORMS','TOWED PLATFORMS','MASTIL TELESCOPICO','TIJERAS ELECTRICAS','TIJERAS TERMICAS'];
+function rModeloPartes(m){
+  const t = String(m || '').trim();
+  const up = t.toUpperCase();
+  const tipo = R_TIPOS_MAQUINA.find(x => up.startsWith(x + ' ')) || '';
+  return { tipo: tipo ? t.slice(0, tipo.length) : '', corto: (tipo ? t.slice(tipo.length) : t).trim() };
 }
+function rModeloCorto(m){ return rModeloPartes(m).corto; }
 function rLeyendaAplica(doc, modelos, ancho){
   if(!Array.isArray(modelos) || !modelos.length) return [];
   const nombres = [...new Set(modelos.map(rModeloCorto).filter(Boolean))];

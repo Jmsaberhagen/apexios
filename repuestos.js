@@ -381,7 +381,7 @@ async function abrirBuscadorPorModelo(){
       if(!rpmModelos){
         const { data, error } = await sb.rpc('modelos_repuestos_gp');
         if(error) throw error;
-        rpmModelos = (data || []).map(m => { const corto = rModeloCorto(m.modelo); return { modelo: m.modelo, cant: m.cant, corto, tipo: String(m.modelo).replace(corto, '').trim(), clave: norm(m.modelo) }; });
+        rpmModelos = (data || []).map(m => { const pt = rModeloPartes(m.modelo); return { modelo: m.modelo, cant: m.cant, corto: pt.corto, tipo: pt.tipo, clave: norm(m.modelo) }; });
       }
       qm.disabled = false; qm.placeholder = 'Modelo: escribí parte (HA16, HTL4017…)';
     } catch(e){
