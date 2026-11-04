@@ -303,7 +303,7 @@ function abrirBuscadorClientes(act){
 }
 function abrirBuscadorRepuestos(){
   let res = [];
-  abrirHoja('Agregar repuesto', `<div class="search">${ic('search')}<input id="rep-q" type="search" placeholder="Código o descripción (mín. 2 letras)" autocomplete="off"></div><div id="rep-res"><div class="dim" style="text-align:center;padding:18px;font-size:13px">Escribí para buscar</div></div>`, sh => {
+  abrirHoja('Agregar repuesto', `<div class="search">${ic('search')}<input id="rep-q" type="search" placeholder="Código o descripción (mín. 2 letras)" autocomplete="off"></div><button class="btn block" style="margin:8px 0 4px" data-act="rpor-modelo">🚜 No sé el código: buscar por modelo de máquina</button><div id="rep-res"><div class="dim" style="text-align:center;padding:18px;font-size:13px">Escribí para buscar</div></div>`, sh => {
     const inp = $('#rep-q', sh); let t, seq = 0;
     window.__repRes = () => res;
     inp.addEventListener('input', () => {
@@ -323,6 +323,56 @@ function abrirBuscadorRepuestos(){
       }, 350);
     });
     setTimeout(() => inp.focus(), 250);
+  });
+}
+
+// ---------- Buscar repuestos por modelo de máquina ----------
+const RPM_PAGE = 60;
+let rpmModelos = null, rpmRes = [], rpmTotal = 0, rpmSeq = 0;
+function rpmFilasHtml(){
+  if(!rpmRes.length) return '<div class="empty" style="padding:24px"><b>Sin resultados</b>Probá con otro filtro.</div>';
+  return rpmRes.map((r, i) => {
+    const ya = R.ed && R.ed.items.find(x => x.codigo === r.codigo);
+    return `<button class="opt" data-act="rsel-pm" data-i="${i}"><div class="tx"><b>${esc(r.codigo)}</b><small>${esc(r.descripcion)}</small></div>${ya ? `<span class="dim" style="font-size:12px;color:var(--ok)">✓ ×${esc(ya.cantidad)}</span>` : `<span class="dim" style="font-size:20px">＋</span>`}</button>`;
+  }).join('');
+}
+async function rpmBuscar(sh, mas){
+  const modelo = $('#pm-modelo', sh).value, q = $('#pm-q', sh).value.trim();
+  const out = $('#pm-res', sh), info = $('#pm-info', sh), btnMas = $('#pm-mas', sh);
+  if(!modelo){ rpmRes = []; rpmTotal = 0; out.innerHTML = '<div class="dim" style="text-align:center;padding:18px;font-size:13px">Elegí un modelo para ver sus repuestos</div>'; info.textContent = ''; btnMas.style.display = 'none'; return; }
+  const mi = ++rpmSeq, desde = mas ? rpmRes.length : 0;
+  if(!mas) out.innerHTML = '<div class="dim" style="text-align:center;padding:18px">Buscando…</div>';
+  const { data, error } = await sb.rpc('repuestos_por_modelo_gp', { p_modelo: modelo, p_q: q || null, p_limit: RPM_PAGE, p_offset: desde });
+  if(mi !== rpmSeq) return;
+  if(error){ out.innerHTML = `<div class="empty" style="padding:24px"><b>No se pudo buscar</b>${esc(navigator.onLine ? rErrTxt(error) : 'Sin conexión')}</div>`; return; }
+  rpmRes = mas ? rpmRes.concat(data || []) : (data || []);
+  rpmTotal = rpmRes.length ? Number(rpmRes[0].total) : 0;
+  info.textContent = rpmTotal ? `${rpmTotal} compatibles` + (rpmRes.length < rpmTotal ? ` · mostrando ${rpmRes.length}` : '') : '';
+  btnMas.style.display = rpmRes.length < rpmTotal ? '' : 'none';
+  out.innerHTML = rpmFilasHtml();
+}
+async function abrirBuscadorPorModelo(){
+  abrirHoja('Repuestos por modelo', `<div class="field"><select class="in" id="pm-modelo"><option value="">Cargando modelos…</option></select></div>
+    <div class="search">${ic('search')}<input id="pm-q" type="search" placeholder="Filtrar: filtro, bomba, código…" autocomplete="off"></div>
+    <div class="dim" id="pm-info" style="font-size:12px;margin:6px 2px"></div>
+    <div id="pm-res"><div class="dim" style="text-align:center;padding:18px;font-size:13px">Elegí un modelo para ver sus repuestos</div></div>
+    <button class="btn block" id="pm-mas" style="display:none;margin-top:8px" data-act="rpm-mas">Ver más</button>
+    <button class="btn primary block" style="margin-top:10px" data-act="cerrar-ov">Listo</button>`, async sh => {
+    window.__rpmSh = sh;
+    let t;
+    $('#pm-modelo', sh).addEventListener('change', () => rpmBuscar(sh, false));
+    $('#pm-q', sh).addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => rpmBuscar(sh, false), 350); });
+    try{
+      if(!rpmModelos){
+        const { data, error } = await sb.rpc('modelos_repuestos_gp');
+        if(error) throw error;
+        rpmModelos = data || [];
+      }
+      $('#pm-modelo', sh).innerHTML = '<option value="">Elegí un modelo de máquina…</option>' + rpmModelos.map(m => `<option value="${esc(m.modelo)}">${esc(m.modelo)} (${m.cant})</option>`).join('');
+    } catch(e){
+      $('#pm-modelo', sh).innerHTML = '<option value="">No se pudieron cargar los modelos</option>';
+      $('#pm-info', sh).textContent = navigator.onLine ? rErrTxt(e) : 'Sin conexión';
+    }
   });
 }
 
@@ -436,6 +486,18 @@ async function accionRepuestos(act, el){
       R.ed.dirty = true; cerrarOverlay(); return render();
     }
     case 'radd-item': return abrirBuscadorRepuestos();
+    case 'rpor-modelo': return abrirBuscadorPorModelo();
+    case 'rpm-mas': return window.__rpmSh && rpmBuscar(window.__rpmSh, true);
+    case 'rsel-pm': {
+      const r = rpmRes[i]; if(!r || !R.ed) return;
+      const ya = R.ed.items.find(x => x.codigo === r.codigo);
+      if(ya) ya.cantidad = Number(ya.cantidad) + 1; else R.ed.items.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: 1, costo: Number(r.costo_arg_usd) });
+      R.ed.dirty = true;
+      const y = window.scrollY; render(); window.scrollTo(0, y);      // el editor de atrás se actualiza; la hoja queda abierta para seguir agregando
+      toast('Agregado: ' + r.codigo);
+      const sh = window.__rpmSh; if(sh){ const sc = $('.sb', sh) ? $('.sb', sh).scrollTop : 0; $('#pm-res', sh).innerHTML = rpmFilasHtml(); if($('.sb', sh)) $('.sb', sh).scrollTop = sc; }
+      return;
+    }
     case 'rsel-art': {
       const r = (window.__repRes ? window.__repRes() : [])[i]; if(!r) return;
       const ya = R.ed.items.find(x => x.codigo === r.codigo);

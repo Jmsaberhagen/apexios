@@ -93,8 +93,50 @@ async function rPrecargarFotos(items){
       }
     }
   } catch(e){ console.warn('No se pudieron cargar las fotos del PDF:', e); }
-  items.forEach(i => { i.foto = rFotoMem[i.codigo] || null; });
+  await rPrecargarModelos(items);
+  items.forEach(i => { i.foto = rFotoMem[i.codigo] || null; i.modelos_uso = rModMem[i.codigo] || null; });
   return items;
+}
+
+// Modelos de uso ("Aplica a: …") — se guardan en el teléfono (clave "repmod:CODIGO") para verlos sin señal.
+const rModMem = {};
+async function rPrecargarModelos(items){
+  try{
+    const codigos = [...new Set(items.map(i => i.codigo).filter(Boolean))];
+    const faltan = [];
+    for(const c of codigos){
+      if(c in rModMem) continue;
+      if(navigator.onLine){ faltan.push(c); continue; }
+      const g = (typeof fotoCacheGet === 'function') ? await fotoCacheGet('repmod:' + c) : null;
+      rModMem[c] = g && Array.isArray(g.m) ? g.m : null;
+    }
+    for(let i = 0; i < faltan.length; i += 100){
+      const lote = faltan.slice(i, i + 100);
+      const { data, error } = await sb.from('haulotte_repuestos_gp').select('codigo,modelos_uso').in('codigo', lote);
+      if(error) throw error;
+      const m = {}; (data || []).forEach(r => { m[r.codigo] = Array.isArray(r.modelos_uso) ? r.modelos_uso : null; });
+      lote.forEach(c => { rModMem[c] = m[c] || null; if(typeof fotoCachePut === 'function') fotoCachePut('repmod:' + c, { m: rModMem[c] }); });
+    }
+  } catch(e){ console.warn('No se pudieron cargar los modelos de uso:', e); }
+}
+function rModeloCorto(m){
+  const t = String(m || '').trim().split(/\s+/);
+  const i = t.findIndex(x => /\d/.test(x));
+  return (i > 0 ? t.slice(i) : t).join(' ');
+}
+function rLeyendaAplica(doc, modelos, ancho){
+  if(!Array.isArray(modelos) || !modelos.length) return [];
+  const nombres = [...new Set(modelos.map(rModeloCorto).filter(Boolean))];
+  if(!nombres.length) return [];
+  doc.setFont('helvetica', 'italic'); doc.setFontSize(6.5);
+  let ls = [];
+  for(let k = Math.min(4, nombres.length); k >= 1; k--){
+    const resto = nombres.length - k;
+    ls = doc.splitTextToSize('Aplica a: ' + nombres.slice(0, k).join(', ') + (resto > 0 ? ' y ' + resto + ' más' : ''), ancho);
+    if(ls.length <= 2) break;
+  }
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+  return ls.slice(0, 2);
 }
 
 // cot: { numero, fecha_emision, validez_dias, cliente:{razon_social}, empresa_nombre, contacto_*, condicion_pago, notas,
@@ -156,7 +198,8 @@ function generarRepuestosPDF(cot){
   calc.items.forEach(it => {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
     const ls = doc.splitTextToSize(it.descripcion || "", 46).slice(0, 4);
-    const h = Math.max(ls.length * 4 + 2.5, FOTO_H + 4);
+    const leyenda = rLeyendaAplica(doc, it.modelos_uso, 46);
+    const h = Math.max(ls.length * 4 + (leyenda.length ? leyenda.length * 3.1 + 1 : 0) + 2.5, FOTO_H + 4);
     if(y + h > LIM){ doc.addPage(); y = encabezado(); y = cabTabla(y); z = 0; }
     if(z++ % 2 === 1){ doc.setFillColor(246, 247, 249); doc.rect(marginX, y - 4, pageWidth - marginX * 2, h, 'F'); }
     // Miniatura (si no hay foto, recuadro gris liviano para que la tabla no quede desalineada)
@@ -171,6 +214,11 @@ function generarRepuestosPDF(cot){
     }
     doc.setFont('helvetica', 'bold'); doc.text(String(it.codigo || ''), X.cod, y);
     doc.setFont('helvetica', 'normal'); doc.text(ls, X.desc, y);
+    if(leyenda.length){
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(6.5); doc.setTextColor(110);
+      doc.text(leyenda, X.desc, y + ls.length * 4 + 0.2);
+      doc.setTextColor(0); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    }
     doc.text(String(it.cantidad), X.cant, y, { align: 'right' });
     doc.text(rpN2(it.unit), X.pu, y, { align: 'right' });
     doc.text(rpN2(it.sub), X.sub, y, { align: 'right' });
