@@ -1,5 +1,5 @@
 // Solo se usa cuando el cotizador se instala como app web (iPhone / navegador). En Android el APK ya trae todos los archivos.
-const CACHE = 'apex-cotizador-v12';
+const CACHE = 'apex-cotizador-v13';
 const ARCHIVOS = ['./', 'index.html', 'app.css', 'app.js', 'db.js', 'sync.js', 'config.js', 'pdf-presupuesto.js', 'logo-haulotte.js', 'venta.js', 'repuestos-core.js', 'repuestos.js',
   'vendor/supabase.js', 'vendor/jspdf.umd.min.js', 'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'fonts/inter-latin.woff2', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'icon-180.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS)).then(() => self.skipWaiting())); });

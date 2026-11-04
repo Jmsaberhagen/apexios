@@ -403,11 +403,8 @@ async function rGuardar(){
   if(!R.ed) return;
   if(!navigator.onLine) return toast('Sin conexión. Este cotizador necesita internet para guardar.', 'err');
   if(!rValidar()) return;
-  const sinCosto = R.ed.items.filter(i => Number(i.cantidad) > 0 && rEsNacional(i) && !i.costoEditado);
-  if(sinCosto.length){
-    const ok = await confirmar({ titulo: 'Costo de artículos nacionales', texto: `${sinCosto.map(i => i.codigo).join(', ')}: todavía tienen el costo de la lista, que no es el real. ¿Guardar igual?`, ok: 'Guardar igual', cancelar: 'Corregir costo' });
-    if(!ok) return;
-  }
+  const sinCosto = R.ed.items.filter(i => Number(i.cantidad) > 0 && !(Number(i.costo) > 0));
+  if(sinCosto.length) return toast(`No se puede guardar: sin costo ARG → ${sinCosto.map(i => i.codigo).join(', ')}. En los A- se carga a mano.`, 'err');
   const d = R.ed.d, c = reCalc();
   const cab = {
     cliente_id: d.cliente_id || null, empresa_nombre: d.cliente_id ? null : (d.empresa_nombre.trim() || null),
@@ -506,7 +503,7 @@ async function accionRepuestos(act, el){
     case 'rsel-pm': {
       const r = rpmRes[i]; if(!r || !R.ed) return;
       const ya = R.ed.items.find(x => x.codigo === r.codigo);
-      if(ya) ya.cantidad = Number(ya.cantidad) + 1; else R.ed.items.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: 1, costo: Number(r.costo_arg_usd) });
+      if(ya) ya.cantidad = Number(ya.cantidad) + 1; else R.ed.items.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: 1, costo: rEsNacional(r) ? 0 : Number(r.costo_arg_usd) });
       R.ed.dirty = true;
       const y = window.scrollY; render(); window.scrollTo(0, y);      // el editor de atrás se actualiza; la hoja queda abierta para seguir agregando
       toast('Agregado: ' + r.codigo);
@@ -516,7 +513,7 @@ async function accionRepuestos(act, el){
     case 'rsel-art': {
       const r = (window.__repRes ? window.__repRes() : [])[i]; if(!r) return;
       const ya = R.ed.items.find(x => x.codigo === r.codigo);
-      if(ya) ya.cantidad = Number(ya.cantidad) + 1; else R.ed.items.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: 1, costo: Number(r.costo_arg_usd) });
+      if(ya) ya.cantidad = Number(ya.cantidad) + 1; else R.ed.items.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: 1, costo: rEsNacional(r) ? 0 : Number(r.costo_arg_usd) });
       R.ed.dirty = true; cerrarOverlay(); return render();
     }
     case 'rquitar-item': R.ed.items.splice(i, 1); R.ed.dirty = true; return render();
