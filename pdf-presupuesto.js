@@ -275,7 +275,7 @@ async function generarPresupuestoPDF(p){   // [app] recibe el presupuesto comple
     y += 6;
     total += Number(p.flete_monto);
   }
-  if(!p.ocultar_total){
+  if(!p.ocultar_total && !presEsMulti(p)){
     doc.setFont('helvetica','bold');
     doc.setFontSize(11);
     doc.text(`TOTAL: ${fmtMoney(total, p.moneda)}`, pageWidth - marginX, y, { align:'right' });

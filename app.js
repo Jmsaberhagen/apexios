@@ -298,13 +298,13 @@ function cardsHtml(){
   }
   return list.map((p, i) => {
     const st = estadoVista(p);
-    const n = (p.presupuesto_items || []).length;
+    const n = new Set((p.presupuesto_items || []).map(it => (it.modelo || '').trim().toLowerCase())).size;
     const pend = p._pending || p._anular;
     return `<button class="card st-${st}" data-act="abrir" data-key="${esc(p.key)}" style="animation-delay:${Math.min(i, 8) * 30}ms">
       <div class="row"><span class="num">${esc(numeroTexto(p))}</span><span class="badge st-${st}">${ESTADO_LABEL[st] || st}</span></div>
       <div class="who">${esc(clienteNombreDe(p))}</div>
-      <div class="row"><span class="meta">${fmtDate(p.fecha_emision)} · ${n} ítem${n === 1 ? '' : 's'}${p.contacto_nombre ? ' · ' + esc(p.contacto_nombre) : ''}</span>
-        <span class="total">${esc(fmtMoney(totalPresupuesto(p), p.moneda || 'USD'))}</span></div>
+      <div class="row"><span class="meta">${fmtDate(p.fecha_emision)} · ${n} equipo${n === 1 ? '' : 's'}${p.contacto_nombre ? ' · ' + esc(p.contacto_nombre) : ''}</span>
+        <span class="total">${esc(totalTexto(p, p.moneda || 'USD'))}</span></div>
       ${pend ? `<div class="meta" style="margin-top:6px;color:var(--warn);font-weight:600">Pendiente de subir</div>` : ''}
       ${(st === 'vigente' || st === 'borrador') && advertenciasStock(p.sucursal_id, p.presupuesto_items).length ? `<div class="alerta">${ic('warn')}Sin stock completo en ${esc(sucNombre(p.sucursal_id))}</div>` : ''}
     </button>`;
@@ -381,8 +381,8 @@ function vDetail(){
         <div class="top"><span class="num">${esc(numeroTexto(p))}</span><span class="badge st-${st}">${ESTADO_LABEL[st] || st}</span></div>
         <h2>${esc(clienteNombreDe(p))}</h2>
         ${p.contacto_nombre ? `<div class="dim">${esc(p.contacto_nombre)}${p.contacto_telefono ? ' · ' + esc(p.contacto_telefono) : ''}</div>` : ''}
-        <div class="big"><span class="dim">Total</span><b>${esc(fmtMoney(totalPresupuesto(p), moneda))}</b></div>
-        ${p.ocultar_total ? `<div class="dim" style="font-size:12px;text-align:right;margin-top:2px">El total no se muestra en el PDF</div>` : ''}
+        <div class="big"><span class="dim">${presEsMulti(p) ? 'Cotización' : 'Total'}</span><b>${esc(totalTexto(p, moneda))}</b></div>
+        ${p.ocultar_total && !presEsMulti(p) ? `<div class="dim" style="font-size:12px;text-align:right;margin-top:2px">El total no se muestra en el PDF</div>` : ''}
         <div class="kv">
           <div><small>Emisión</small><b>${fmtDate(p.fecha_emision)}</b></div>
           <div><small>Válido hasta</small><b>${venceTxt}</b></div>
@@ -449,19 +449,24 @@ function editorDesde(p){
   d.flete_incluir = !!p.flete_incluir;
   d.flete_txt = fmtNumInput(p.flete_monto);
   d.ocultar_total = !!p.ocultar_total;
-  e.items = (p.presupuesto_items || []).slice().sort((a, b) => (a.orden || 0) - (b.orden || 0)).map(it => ({
-    modelo: it.modelo || '', categoria: it.categoria || '', descripcion: it.descripcion || it.modelo || '',
-    cantidad: Number(it.cantidad) || 1, periodo: it.periodo || 'Mes', precio_txt: fmtNumInput(it.precio_unitario),
-  }));
+  // un equipo = una tarjeta con sus tres precios (día / semana / mes)
+  e.items = [];
+  const idxItems = {};
+  (p.presupuesto_items || []).slice().sort((x, z) => (x.orden || 0) - (z.orden || 0)).forEach(it => {
+    const k = (it.modelo || '').trim().toLowerCase();
+    if(!(k in idxItems)){
+      idxItems[k] = e.items.length;
+      e.items.push({ modelo: it.modelo || '', categoria: it.categoria || '', descripcion: it.descripcion || it.modelo || '', cantidad: 1, dia_txt: '', sem_txt: '', mes_txt: '' });
+    }
+    const o = e.items[idxItems[k]];
+    o.cantidad = Math.max(o.cantidad, Number(it.cantidad) || 1);
+    o[it.periodo === 'Día' ? 'dia_txt' : it.periodo === 'Semana' ? 'sem_txt' : 'mes_txt'] = fmtNumInput(it.precio_unitario);
+  });
   return e;
 }
-function editorTotal(){
-  const sub = E.items.reduce((a, it) => a + (Number(it.cantidad) || 0) * parseNum(it.precio_txt), 0);
-  return sub + (E.data.flete_incluir ? parseNum(E.data.flete_txt) : 0);
-}
+function editorTotal(){ return 0; }   // cada equipo se cotiza por día, semana y mes: no hay total único
 function itemHtml(it, i){
   const mon = E.data.moneda === 'USD' ? 'U$D' : '$';
-  const sub = (Number(it.cantidad) || 0) * parseNum(it.precio_txt);
   return `<div class="item" data-i="${i}">
     <div class="item-head">${thumbHtml(it.modelo)}
       <button class="nm" data-act="cambiar-modelo" data-i="${i}">${it.modelo
@@ -473,13 +478,11 @@ function itemHtml(it, i){
       <div class="qty"><button type="button" data-act="qty-" data-i="${i}" aria-label="Menos">−</button>
         <input data-i="${i}" data-k="cantidad" inputmode="numeric" value="${esc(it.cantidad)}" aria-label="Cantidad">
         <button type="button" data-act="qty+" data-i="${i}" aria-label="Más">+</button></div>
-      <div class="seg" data-seg="${i}">${['Día', 'Semana', 'Mes'].map(p => `<button type="button" class="${it.periodo === p ? 'on' : ''}" data-act="periodo" data-i="${i}" data-v="${p}">${p}</button>`).join('')}</div>
     </div>
-    <div class="item-foot">
-      <div class="price" style="flex:1"><span>${mon}</span><input class="in" data-i="${i}" data-k="precio" inputmode="decimal" placeholder="0,00" value="${esc(it.precio_txt)}" aria-label="Precio unitario"></div>
-      <div class="sub" data-sub="${i}">${esc(fmtMoney(sub, E.data.moneda))}</div>
+    <div class="item-prices">
+      ${[['dia_txt', 'Por día'], ['sem_txt', 'Por semana'], ['mes_txt', 'Por mes']].map(([k, lb]) => `<label class="pp"><small>${lb}</small>
+        <div class="price"><span>${mon}</span><input class="in" data-i="${i}" data-k="${k}" inputmode="decimal" placeholder="0,00" value="${esc(it[k])}" aria-label="Precio ${lb.toLowerCase()}"></div></label>`).join('')}
     </div>
-    <div class="add-row"><button type="button" class="btn sm ghost" data-act="dup-item" data-i="${i}">${ic('copy')}Cotizar otro período</button></div>
   </div>`;
 }
 function fld(label, key, opts){
@@ -551,7 +554,7 @@ function vEditor(){
     <main class="ed-body" id="ed-body">${pasoHtml()}</main>
     <footer class="ed-foot">
       ${E.step > 0 ? `<button class="icon-btn" data-act="prev" aria-label="Anterior">${ic('back')}</button>` : ''}
-      <div class="tot"><small>Total${E.data.ocultar_total ? ' · oculto en PDF' : ''}</small><b id="ed-total">${esc(fmtMoney(editorTotal(), E.data.moneda))}</b></div>
+      <div class="tot"><small>Cotización</small><b id="ed-total" style="font-size:14px">Día · Semana · Mes</b></div>
       <button class="btn primary" data-act="${ult ? 'guardar' : 'next'}">${ult ? ic('check') + 'Guardar' : 'Siguiente' + ic('chevron')}</button>
     </footer></div>`;
 }
@@ -559,13 +562,7 @@ function refrescarStockItem(i){
   const box = document.getElementById('stk-' + i), it = E && E.items[i];
   if(box && it) box.innerHTML = stockHtml(it.modelo, E.data.sucursal_id, it.cantidad);
 }
-function actualizarTotales(){
-  const t = $('#ed-total'); if(t) t.textContent = fmtMoney(editorTotal(), E.data.moneda);
-  E.items.forEach((it, i) => {
-    const s = document.querySelector(`[data-sub="${i}"]`);
-    if(s) s.textContent = fmtMoney((Number(it.cantidad) || 0) * parseNum(it.precio_txt), E.data.moneda);
-  });
-}
+function actualizarTotales(){ /* sin total: cada equipo lleva tres precios */ }
 
 // ---------- Render general ----------
 function render(){
@@ -698,6 +695,8 @@ async function guardarEditor(){
   if(!d.sucursal_id){ irPaso(1); return; }
   const items = E.items.filter(it => it.modelo && Number(it.cantidad) > 0);
   if(!items.length){ toast('Agregá al menos un equipo con modelo y cantidad', 'err'); irPaso(1); return; }
+  const incompleto = items.find(it => !(parseNum(it.dia_txt) > 0 && parseNum(it.sem_txt) > 0 && parseNum(it.mes_txt) > 0));
+  if(incompleto){ toast(`${incompleto.modelo}: completá los TRES precios (día, semana y mes)`, 'err'); irPaso(1); return; }
   if(!d.cliente_id && !d.empresa_nombre.trim()){ toast('Elegí un cliente o escribí el nombre de la empresa', 'err'); irPaso(0); return; }
   const fe = dmyAIso(d.fecha_emision);
   if(!fe){ toast('La fecha de emisión debe ser DD/MM/AAAA', 'err'); irPaso(2); return; }
@@ -736,10 +735,10 @@ async function guardarEditor(){
     flete_incluir: !!d.flete_incluir,
     flete_monto: d.flete_incluir ? parseNum(d.flete_txt) : 0,
     ocultar_total: !!d.ocultar_total,
-    presupuesto_items: items.map((it, i) => ({
+    presupuesto_items: items.flatMap((it, i) => [['mes_txt', 'Mes'], ['sem_txt', 'Semana'], ['dia_txt', 'Día']].map(([k, per], j) => ({
       modelo: it.modelo, categoria: it.categoria || null, descripcion: it.modelo,
-      cantidad: Number(it.cantidad), periodo: it.periodo, precio_unitario: parseNum(it.precio_txt), orden: i,
-    })),
+      cantidad: Number(it.cantidad), periodo: per, precio_unitario: parseNum(it[k]), orden: i * 3 + j,
+    }))),
     clientes: d.cliente_id ? { razon_social: d.cliente_nombre } : null,
     sucursales: suc ? { nombre: suc.nombre } : null,
     _pending: true, _op: base.id ? 'update' : 'create', _error: null,
@@ -997,7 +996,7 @@ async function accion(act, el){
     case 'moneda': E.data.moneda = el.dataset.v; E.dirty = true; return render();
     case 'add-item': return abrirModelos(m => {
       const f = buscarFichaTecnica(m);
-      E.items.push({ modelo: m, categoria: f ? f.categoria || '' : '', descripcion: m, cantidad: 1, periodo: 'Mes', precio_txt: '' });
+      E.items.push({ modelo: m, categoria: f ? f.categoria || '' : '', descripcion: m, cantidad: 1, dia_txt: '', sem_txt: '', mes_txt: '' });
       E.dirty = true; render();
     });
     case 'cambiar-modelo': return abrirModelos(m => {
@@ -1018,21 +1017,6 @@ async function accion(act, el){
       const inp = document.querySelector(`input[data-k="cantidad"][data-i="${i}"]`); if(inp) inp.value = it.cantidad;
       E.dirty = true; refrescarStockItem(i); return actualizarTotales();
     }
-    case 'periodo': {
-      E.items[i].periodo = el.dataset.v; E.dirty = true;
-      document.querySelectorAll(`[data-seg="${i}"] button`).forEach(b => b.classList.toggle('on', b.dataset.v === el.dataset.v));
-      return;
-    }
-    case 'dup-item': {
-      // Igual que en APEX web: sugiere el período que falta cotizar de ese mismo modelo (Mes → Semana → Día)
-      const o = E.items[i];
-      const usados = E.items.filter(x => (x.modelo || '').trim().toLowerCase() === (o.modelo || '').trim().toLowerCase()).map(x => x.periodo);
-      const sug = ['Mes', 'Semana', 'Día'].find(p => !usados.includes(p)) || 'Mes';
-      E.items.splice(i + 1, 0, { modelo: o.modelo, categoria: o.categoria, descripcion: o.descripcion, cantidad: 1, periodo: sug, precio_txt: '' });
-      E.dirty = true; render();
-      setTimeout(() => { const n = document.querySelector(`input[data-k="precio"][data-i="${i + 1}"]`); if(n){ n.scrollIntoView({ block: 'center', behavior: 'smooth' }); n.focus(); } }, 60);
-      return;
-    }
     default: return accionVenta(act, el);          // menú de inicio y venta Haulotte (venta.js)
   }
 }
@@ -1051,7 +1035,7 @@ document.addEventListener('input', e => {
   if(t.dataset.k){
     const it = E.items[Number(t.dataset.i)]; if(!it) return;
     if(t.dataset.k === 'cantidad'){ it.cantidad = Math.max(0, parseInt(String(t.value).replace(/\D/g, ''), 10) || 0); refrescarStockItem(Number(t.dataset.i)); }
-    if(t.dataset.k === 'precio') it.precio_txt = t.value;
+    if(/_txt$/.test(t.dataset.k)) it[t.dataset.k] = t.value;
     E.dirty = true; actualizarTotales();
   }
 });
@@ -1067,7 +1051,7 @@ document.addEventListener('focusout', e => {
   const t = e.target;
   if(!E) return;
   const dar = v => { const n = parseNum(v); return n ? fmtNumInput(n) : ''; };
-  if(t.dataset.k === 'precio'){ const it = E.items[Number(t.dataset.i)]; if(it){ it.precio_txt = dar(t.value); t.value = it.precio_txt; actualizarTotales(); } }
+  if(/_txt$/.test(t.dataset.k || '')){ const it = E.items[Number(t.dataset.i)]; if(it){ it[t.dataset.k] = dar(t.value); t.value = it[t.dataset.k]; } }
   if(t.dataset.f === 'flete_txt'){ E.data.flete_txt = dar(t.value); t.value = E.data.flete_txt; actualizarTotales(); }
 });
 document.addEventListener('keydown', e => {

@@ -64,6 +64,15 @@ function uuid(){
 }
 
 // ---------- Totales ----------
+// ¿Algún equipo se cotiza por más de un período (día / semana / mes)? Entonces no hay un total único.
+function presEsMulti(p){
+  const c = {};
+  (p.presupuesto_items || []).forEach(it => { const k = (it.modelo || '').trim().toLowerCase(); c[k] = (c[k] || 0) + 1; });
+  return Object.values(c).some(n => n > 1);
+}
+function totalTexto(p, moneda){
+  return presEsMulti(p) ? '3 precios por equipo' : fmtMoney(totalPresupuesto(p), moneda || p.moneda || 'USD');
+}
 function totalPresupuesto(p){
   const items = p.presupuesto_items || [];
   const totalItems = items.reduce((acc, it) => acc + (Number(it.cantidad)||0) * (Number(it.precio_unitario)||0), 0);
@@ -339,6 +348,21 @@ async function subirUno(r){
   }
   // 2) Reemplazar los ítems (igual que hace APEX web al guardar)
   if(r._pending){
+    // Si el presupuesto ya respalda contratos activos, no se puede quitar un modelo ni bajar su cantidad por debajo de esos contratos
+    const { data: usados } = await sb.from('contratos').select('presupuesto_modelo').eq('presupuesto_id', r.id).eq('estado', 'activo');
+    if(usados && usados.length){
+      const cuenta = {};
+      usados.forEach(c => { const k = (c.presupuesto_modelo || '').trim().toLowerCase(); cuenta[k] = (cuenta[k] || 0) + 1; });
+      for(const k of Object.keys(cuenta)){
+        const filas = (r.presupuesto_items || []).filter(it => (it.modelo || '').trim().toLowerCase() === k);
+        const cant = filas.reduce((m, it) => Math.max(m, Number(it.cantidad) || 0), 0);
+        if(!filas.length || cant < cuenta[k]){
+          r._error = `Este presupuesto respalda ${cuenta[k]} contrato(s) activo(s) de ${k.toUpperCase()}: no se puede quitar ese modelo ni bajar su cantidad. Corregilo desde el editor.`;
+          await DB.put('presupuestos', r);
+          return;
+        }
+      }
+    }
     const { error: eDel } = await sb.from('presupuesto_items').delete().eq('presupuesto_id', r.id);
     if(eDel) throw eDel;
     const items = payloadItems(r, r.id);
@@ -352,7 +376,17 @@ async function subirUno(r){
   // 3) Anulación hecha sin señal
   if(r._anular){
     const { error } = await sb.from('presupuestos').update({ estado:'anulado', motivo_anulacion: r._anular.motivo || null }).eq('id', r.id);
-    if(error) throw error;
+    if(error){
+      if(String(error.message || '').includes('PRESUPUESTO_EN_USO')){
+        // Respalda contratos: la anulación no procede (solo un maestro puede forzarla desde APEX web)
+        r._anular = null;
+        r._error = 'No se puede anular: este presupuesto respalda contratos. ' + String(error.message).replace(/^.*PRESUPUESTO_EN_USO:\s*/, '') + ' — Un maestro puede forzar la anulación desde APEX web.';
+        r.estado = 'vigente';
+        await DB.put('presupuestos', r);
+        return;
+      }
+      throw error;
+    }
     r.estado = 'anulado'; r.motivo_anulacion = r._anular.motivo || null; r._anular = null; r._error = null;
     await DB.put('presupuestos', r);
   }

@@ -414,3 +414,8 @@ select.in{appearance:none;background-image:linear-gradient(45deg,transparent 50%
 .cuotas tr.ci td{background:color-mix(in srgb,#e22329 9%,transparent);}
 .cuotas tr.ant td{font-weight:700;}
 .cuotas tr.tot td{font-weight:800;border-top:2px solid var(--text-dim);background:var(--panel-2);}
+
+.item-prices{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px;}
+.item-prices .pp small{display:block;font-size:11.5px;font-weight:700;color:var(--text-dim);margin:0 0 4px 2px;}
+.item-prices .price span{left:10px;font-size:12px;}
+.item-prices .price input{padding-left:34px;padding-right:8px;font-size:14px;min-width:0;}
